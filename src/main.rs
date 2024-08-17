@@ -25,8 +25,9 @@ fn listen(socket: UdpSocket, received_packets: Arc<Mutex<Vec<Vec<u8>>>>) {
 }
 
 fn main() {
+    std::env::set_var("RUST_LOG", "info");
     env_logger::init();
-    let bind_addr = "0.0.0.0:4000"; // Change this to the port you want to listen to.
+    let bind_addr = "0.0.0.0:8001"; // Change this to the port you want to listen to.
     let socket = UdpSocket::bind(bind_addr).expect("Couldn't bind to address");
     let received_packets = Arc::new(Mutex::new(Vec::new()));
 
