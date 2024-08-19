@@ -1,10 +1,12 @@
 use log::{error, info};
+use std::io::Write;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
+use tokio::signal;
 use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration};
 
-const PACKET_DATA_SIZE: usize = 1024; // use correct size from your context
+const PACKET_DATA_SIZE: usize = 1024;
 
 async fn listen(socket: Arc<UdpSocket>, received_packets: Arc<Mutex<Vec<Vec<u8>>>>) {
     let mut buf = [0u8; PACKET_DATA_SIZE];
@@ -19,6 +21,15 @@ async fn listen(socket: Arc<UdpSocket>, received_packets: Arc<Mutex<Vec<Vec<u8>>
             }
         }
     }
+}
+
+async fn dump_to_file(received_packets: Arc<Mutex<Vec<Vec<u8>>>>) {
+    let packets = received_packets.lock().await;
+    let mut file = std::fs::File::create("packets.json").expect("Couldn't create file");
+    let as_json = serde_json::to_string(&packets.clone()).expect("Couldn't serialize to json");
+    file.write_all(as_json.as_bytes())
+        .expect("Couldn't write to file");
+    info!("Packets dumped to packets.json");
 }
 
 #[tokio::main]
@@ -38,15 +49,23 @@ async fn main() {
     let receiver = received_packets.clone();
     let socket_clone = socket.clone();
 
-    tokio::spawn(async move {
+    let listen_handle = tokio::spawn(async move {
         listen(socket_clone, receiver).await;
     });
 
-    loop {
-        // Optionally process the received packets
-        let packets = received_packets.lock().await;
-        info!("Total packets received: {}", packets.len());
-        drop(packets); // Explicitly drop the lock
-        sleep(Duration::from_secs(1)).await;
-    }
+    let packets_clone = received_packets.clone();
+    tokio::spawn(async move {
+        loop {
+            let packets = packets_clone.lock().await;
+            info!("Total packets received: {}", packets.len());
+            drop(packets);
+            sleep(Duration::from_secs(1)).await;
+        }
+    });
+
+    signal::ctrl_c().await.expect("Failed to listen for Ctrl+C");
+    info!("Ctrl+C received, dumping packets to file...");
+    dump_to_file(received_packets).await;
+    listen_handle.abort();
 }
+
