@@ -11,7 +11,6 @@ async fn listen(socket: Arc<UdpSocket>, received_packets: Arc<Mutex<Vec<Vec<u8>>
     loop {
         match socket.recv_from(&mut buf).await {
             Ok((received, _)) => {
-                info!("Received packet of size: {}", received);
                 let packet = Vec::from(&buf[..received]);
                 received_packets.lock().await.push(packet);
             }
@@ -48,7 +47,6 @@ async fn main() {
         let packets = received_packets.lock().await;
         info!("Total packets received: {}", packets.len());
         drop(packets); // Explicitly drop the lock
-        sleep(Duration::from_secs(5)).await;
+        sleep(Duration::from_secs(1)).await;
     }
 }
-
