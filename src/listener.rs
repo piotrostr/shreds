@@ -7,7 +7,7 @@ use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration};
 
 pub async fn listen(socket: Arc<UdpSocket>, received_packets: Arc<Mutex<Vec<Vec<u8>>>>) {
-    let mut buf = [0u8];
+    let mut buf = [0u8; 1228]; // max shred size
     loop {
         match socket.recv_from(&mut buf).await {
             Ok((received, _)) => {
