@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use solana_ledger::shred::{layout, Error, Shred, ShredData, ShredType};
+use solana_ledger::shred::{layout, Error, Shred, ShredType};
 use solana_sdk::signature::SIGNATURE_BYTES;
 use std::convert::TryFrom;
 

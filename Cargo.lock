@@ -3600,6 +3600,7 @@ dependencies = [
  "log",
  "serde",
  "serde_json",
+ "solana-entry",
  "solana-ledger",
  "solana-sdk",
  "tokio",
