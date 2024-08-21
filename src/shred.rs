@@ -165,57 +165,96 @@ impl TryFrom<u8> for ShredVariant {
 
 #[cfg(test)]
 mod tests {
+    const SIZE_OF_COMMON_SHRED_HEADER: usize = 83;
+    const SIZE_OF_DATA_SHRED_HEADERS: usize = 88;
+    const SIZE_OF_CODING_SHRED_HEADERS: usize = 89;
+    const SIZE_OF_SIGNATURE: usize = SIGNATURE_BYTES;
+    const SIZE_OF_SHRED_VARIANT: usize = 1;
+    const SIZE_OF_SHRED_SLOT: usize = 8;
+
+    const OFFSET_OF_SHRED_VARIANT: usize = SIZE_OF_SIGNATURE;
+    const OFFSET_OF_SHRED_SLOT: usize = SIZE_OF_SIGNATURE + SIZE_OF_SHRED_VARIANT;
+    const OFFSET_OF_SHRED_INDEX: usize = OFFSET_OF_SHRED_SLOT + SIZE_OF_SHRED_SLOT;
+
+    use solana_ledger::shred::{layout, ShredFlags};
     use std::collections::{HashMap, HashSet};
 
     use super::*;
 
+    pub fn extract_data_from_shred(shred: &[u8]) -> Option<Vec<u8>> {
+        // The exact offset might need adjustment based on the shred format
+        // match Shred::new_from_serialized_shred(shred.to_vec()) {
+        //     Ok(result) => Some(result.payload().to_vec()),
+        //     Err(_) => None,
+        // }
+        return shred.get(88..).map(|s| s.to_vec());
+    }
+
+    pub fn get_shred_type(shred: &[u8]) -> Result<ShredType, Error> {
+        let shred_variant = get_shred_variant(shred)?;
+        Ok(ShredType::from(shred_variant))
+    }
+
+    pub fn get_index(shred: &[u8]) -> Option<u32> {
+        <[u8; 4]>::try_from(shred.get(OFFSET_OF_SHRED_INDEX..)?.get(..4)?)
+            .map(u32::from_le_bytes)
+            .ok()
+    }
+
     #[test]
     fn deserialize_shreds() {
-        let data = include_bytes!("../packets.json").to_vec();
-        let json = std::str::from_utf8(&data).unwrap();
-        let raw_shreds: Vec<Vec<u8>> = serde_json::from_str(json).unwrap();
-        let sizes: HashSet<usize> = HashSet::from_iter(raw_shreds.iter().map(|s| s.len()));
-        let mut shreds = Vec::new();
-        println!("Shred sizes: {:?}", sizes);
-        for raw_shred in raw_shreds.iter() {
-            if raw_shred.len() == 29 || raw_shred.len() == 132 {
+        let data = std::fs::read_to_string("packets.json").unwrap();
+        let raw_shreds: Vec<Vec<u8>> = serde_json::from_str(&data).unwrap();
+
+        // Group shreds by slot
+        let mut shreds_by_slot: HashMap<u64, Vec<Vec<u8>>> = HashMap::new();
+        for raw_shred in raw_shreds {
+            if raw_shred.len() == 132 {
                 continue;
             }
-            match deserialize_shred(raw_shred.to_vec()) {
-                Ok(shred) => {
-                    // println!("OK: {:#?} {:#?}", shred.shred_type, shred.common_header);
-                    shreds.push(shred);
+            if let Some(slot) = layout::get_slot(&raw_shred) {
+                if slot > 384947093 {
+                    println!("Slot: {}, shred data len {}", slot, raw_shred.len());
                 }
-                Err(e) => {
-                    panic!("Error deserializing shred: {:?}", e);
-                }
+                shreds_by_slot.entry(slot).or_default().push(raw_shred);
             }
         }
-        println!("total shreds: {}", shreds.len());
-        let mut shreds_per_slot = HashMap::new();
-        shreds.iter().for_each(|shred| {
-            shreds_per_slot.entry(shred.slot()).or_insert_with(Vec::new);
-            shreds_per_slot
-                .get_mut(&shred.slot())
-                .unwrap()
-                .push(shred.clone());
-        });
-        println!("total slots: {}", shreds_per_slot.len());
-        // go slot by slot
-        for (slot, mut slot_shreds) in shreds_per_slot {
-            println!("Slot: {}", slot);
-            slot_shreds.sort_by_key(|shred| shred.index());
 
-            let mut data = Vec::new();
-            for shred in shreds.iter() {
-                data.extend_from_slice(shred.payload());
-                if shred.data_complete() && shred.is_data() {
-                    // Step 4: Deserialize entries from the reconstructed data
-                    let entries = bincode::deserialize::<Vec<Entry>>(shred.payload());
-                    println!("Entries: {:?}", entries);
+        // Process shreds for each slot
+        for (slot, mut slot_shreds) in shreds_by_slot {
+            println!("Processing slot: {}", slot);
+
+            // Sort shreds within the slot
+            slot_shreds.sort_by_key(|shred| get_index(shred).unwrap_or(u32::MAX));
+
+            let mut data_shreds = Vec::new();
+            for shred in slot_shreds {
+                if let Ok(ShredType::Data) = get_shred_type(&shred) {
+                    data_shreds.push(shred);
                 }
             }
-            break;
+
+            // Reconstruct data from shreds
+            let mut reconstructed_data = Vec::new();
+            for shred in data_shreds {
+                if let Some(data) = extract_data_from_shred(&shred) {
+                    reconstructed_data.extend_from_slice(&data);
+                }
+
+                let flags = shred
+                    .get(85)
+                    .map(|&f| ShredFlags::from_bits_truncate(f))
+                    .unwrap_or_default();
+                if flags.contains(ShredFlags::LAST_SHRED_IN_SLOT)
+                    && flags.contains(ShredFlags::DATA_COMPLETE_SHRED)
+                {
+                    match bincode::deserialize::<Vec<Entry>>(&reconstructed_data) {
+                        Ok(entries) => println!("OK, {} entries: {:#?}", entries.len(), entries),
+                        Err(e) => eprintln!("FAIL {:#?}", e),
+                    };
+                    reconstructed_data.clear();
+                }
+            }
         }
     }
 }
