@@ -55,12 +55,12 @@ pub fn deserialize_shred(data: &[u8]) -> Result<Shred, &'static str> {
     }
 
     let common_header = CommonHeader {
-        signature: data[0..64].try_into().unwrap(),
-        variant: data[64],
-        slot: u64::from_le_bytes(data[65..73].try_into().unwrap()),
-        shred_index: u32::from_le_bytes(data[73..77].try_into().unwrap()),
-        shred_version: u16::from_le_bytes(data[77..79].try_into().unwrap()),
-        fec_set_index: u32::from_le_bytes(data[79..83].try_into().unwrap()),
+        signature: data[0x00..64].try_into().unwrap(),
+        variant: data[0x40],
+        slot: u64::from_le_bytes(data[0x41..0x41 + 8].try_into().unwrap()),
+        shred_index: u32::from_le_bytes(data[0x49..0x49 + 4].try_into().unwrap()),
+        shred_version: u16::from_le_bytes(data[0x49..0x49 + 2].try_into().unwrap()),
+        fec_set_index: u32::from_le_bytes(data[0x4f..0x4f + 4].try_into().unwrap()),
     };
 
     let auth_type = common_header.variant >> 4;
@@ -83,11 +83,11 @@ pub fn deserialize_shred(data: &[u8]) -> Result<Shred, &'static str> {
                 return Err("Insufficient data for data shred header");
             }
             let header = DataShredHeader {
-                parent_offset: u16::from_le_bytes(data[83..85].try_into().unwrap()),
-                data_flags: data[85],
-                size: u16::from_le_bytes(data[86..88].try_into().unwrap()),
+                parent_offset: u16::from_le_bytes(data[0x53..0x53 + 2].try_into().unwrap()),
+                data_flags: data[0x55],
+                size: u16::from_le_bytes(data[0x56..0x56 + 2].try_into().unwrap()),
             };
-            (ShredType::Data(header), 88)
+            (ShredType::Data(header), 0x58)
         }
         _ => return Err("Invalid shred variant"),
     };
@@ -113,22 +113,57 @@ pub fn deserialize_entries(payload: &[u8]) -> Result<Vec<Entry>, bincode::Error>
 
 #[cfg(test)]
 mod tests {
+    use std::collections::{HashMap, HashSet};
+
     use super::*;
 
     #[test]
     fn test_deserialize_shreds_raw() {
         let data = include_bytes!("../packets.json").to_vec();
         let json = std::str::from_utf8(&data).unwrap();
-        let shreds: Vec<Vec<u8>> = serde_json::from_str(json).unwrap();
-        for shred in shreds.iter().nth(2) {
-            match deserialize_shred(&shred.clone()) {
-                Ok(res) => {
-                    println!("OK: {:#?} {:#?}", res.shred_type, res.common_header);
-                    let entries = deserialize_entries(&res.payload).unwrap();
-                    println!("{:#?}", entries);
+        let raw_shreds: Vec<Vec<u8>> = serde_json::from_str(json).unwrap();
+        let sizes: HashSet<usize> = HashSet::from_iter(raw_shreds.iter().map(|s| s.len()));
+        let mut shreds = Vec::new();
+        println!("Shred sizes: {:?}", sizes);
+        for raw_shred in raw_shreds.iter() {
+            if raw_shred.len() == 27 || raw_shred.len() == 132 {
+                continue;
+            }
+            match deserialize_shred(&raw_shred.clone()) {
+                Ok(shred) => {
+                    // println!("OK: {:#?} {:#?}", shred.shred_type, shred.common_header);
+                    shreds.push(shred);
                 }
                 Err(e) => {
-                    eprintln!("Error: {:?}", e);
+                    panic!("Error deserializing shred: {:?}", e);
+                }
+            }
+        }
+        println!("total shreds: {}", shreds.len());
+        let mut shreds_per_slot = HashMap::new();
+        shreds.iter().for_each(|shred| {
+            shreds_per_slot
+                .entry(&shred.common_header.slot)
+                .or_insert_with(Vec::new);
+            shreds_per_slot
+                .get_mut(&shred.common_header.slot)
+                .unwrap()
+                .push(shred);
+        });
+        // go slot by slot
+        for (slot, mut slot_shreds) in shreds_per_slot {
+            println!("Slot: {}", slot);
+            slot_shreds.sort_by_key(|shred| shred.common_header.shred_index);
+
+            let mut data = Vec::new();
+            for shred in shreds.iter() {
+                data.extend_from_slice(&shred.payload);
+                if let ShredType::Data(header) = &shred.shred_type {
+                    if header.data_flags & 0x40 != 0 || header.data_flags & 0x80 != 0 {
+                        // Step 4: Deserialize entries from the reconstructed data
+                        let entries = deserialize_entries(&data).unwrap();
+                        println!("Entries: {:?}", entries);
+                    }
                 }
             }
         }
