@@ -11,7 +11,10 @@ use crate::shred::debug_shred;
 
 pub const PACKET_SIZE: usize = 1280 - 40 - 8;
 
-pub async fn listen(socket: Arc<UdpSocket>, received_packets: Arc<Mutex<Vec<Vec<u8>>>>) {
+pub async fn listen(
+    socket: Arc<UdpSocket>,
+    received_packets: Arc<Mutex<Vec<Vec<u8>>>>,
+) {
     let mut buf = [0u8; PACKET_SIZE]; // max shred size
     loop {
         match socket.recv_from(&mut buf).await {
@@ -48,8 +51,10 @@ pub async fn listen_and_deserialize(socket: Arc<UdpSocket>) {
 
 pub async fn dump_to_file(received_packets: Arc<Mutex<Vec<Vec<u8>>>>) {
     let packets = received_packets.lock().await;
-    let mut file = std::fs::File::create("packets.json").expect("Couldn't create file");
-    let as_json = serde_json::to_string(&packets.clone()).expect("Couldn't serialize to json");
+    let mut file =
+        std::fs::File::create("packets.json").expect("Couldn't create file");
+    let as_json = serde_json::to_string(&packets.clone())
+        .expect("Couldn't serialize to json");
     file.write_all(as_json.as_bytes())
         .expect("Couldn't write to file");
     info!("Packets dumped to packets.json");

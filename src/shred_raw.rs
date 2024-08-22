@@ -58,9 +58,15 @@ pub fn deserialize_shred(data: &[u8]) -> Result<Shred, &'static str> {
         signature: data[0x00..64].try_into().unwrap(),
         variant: data[0x40],
         slot: u64::from_le_bytes(data[0x41..0x41 + 8].try_into().unwrap()),
-        shred_index: u32::from_le_bytes(data[0x49..0x49 + 4].try_into().unwrap()),
-        shred_version: u16::from_le_bytes(data[0x49..0x49 + 2].try_into().unwrap()),
-        fec_set_index: u32::from_le_bytes(data[0x4f..0x4f + 4].try_into().unwrap()),
+        shred_index: u32::from_le_bytes(
+            data[0x49..0x49 + 4].try_into().unwrap(),
+        ),
+        shred_version: u16::from_le_bytes(
+            data[0x49..0x49 + 2].try_into().unwrap(),
+        ),
+        fec_set_index: u32::from_le_bytes(
+            data[0x4f..0x4f + 4].try_into().unwrap(),
+        ),
     };
 
     let auth_type = common_header.variant >> 4;
@@ -72,9 +78,15 @@ pub fn deserialize_shred(data: &[u8]) -> Result<Shred, &'static str> {
                 return Err("Insufficient data for code shred header");
             }
             let header = CodeShredHeader {
-                num_data_shreds: u16::from_le_bytes(data[83..85].try_into().unwrap()),
-                num_coding_shreds: u16::from_le_bytes(data[85..87].try_into().unwrap()),
-                position: u16::from_le_bytes(data[87..89].try_into().unwrap()),
+                num_data_shreds: u16::from_le_bytes(
+                    data[83..85].try_into().unwrap(),
+                ),
+                num_coding_shreds: u16::from_le_bytes(
+                    data[85..87].try_into().unwrap(),
+                ),
+                position: u16::from_le_bytes(
+                    data[87..89].try_into().unwrap(),
+                ),
             };
             (ShredType::Code(header), 89)
         }
@@ -83,9 +95,13 @@ pub fn deserialize_shred(data: &[u8]) -> Result<Shred, &'static str> {
                 return Err("Insufficient data for data shred header");
             }
             let header = DataShredHeader {
-                parent_offset: u16::from_le_bytes(data[0x53..0x53 + 2].try_into().unwrap()),
+                parent_offset: u16::from_le_bytes(
+                    data[0x53..0x53 + 2].try_into().unwrap(),
+                ),
                 data_flags: data[0x55],
-                size: u16::from_le_bytes(data[0x56..0x56 + 2].try_into().unwrap()),
+                size: u16::from_le_bytes(
+                    data[0x56..0x56 + 2].try_into().unwrap(),
+                ),
             };
             (ShredType::Data(header), 0x58)
         }

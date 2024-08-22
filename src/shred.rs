@@ -9,7 +9,8 @@ use solana_sdk::signature::SIGNATURE_BYTES;
 
 pub fn debug_shred(shred: Shred) {
     let size_in_header =
-        u16::from_le_bytes([shred.payload()[0x56], shred.payload()[0x57]]) as usize;
+        u16::from_le_bytes([shred.payload()[0x56], shred.payload()[0x57]])
+            as usize;
     info!(
         "shred: index: {}: payload: {}, size in header: {} zero freq: {} variant: {:?}",
         shred.index(),
@@ -24,20 +25,25 @@ pub fn get_shred_variant(shred: &[u8]) -> Result<ShredVariant, Error> {
     let Some(&shred_variant) = shred.get(OFFSET_OF_SHRED_VARIANT) else {
         return Err(Error::InvalidPayloadSize(shred.len()));
     };
-    ShredVariant::try_from(shred_variant).map_err(|_| Error::InvalidShredVariant)
+    ShredVariant::try_from(shred_variant)
+        .map_err(|_| Error::InvalidShredVariant)
 }
 
 pub fn deserialize_shred(data: Vec<u8>) -> Result<Shred, Error> {
     Shred::new_from_serialized_shred(data)
 }
 
-pub fn deserialize_entries(payload: &[u8]) -> Result<Vec<Entry>, bincode::Error> {
+pub fn deserialize_entries(
+    payload: &[u8],
+) -> Result<Vec<Entry>, bincode::Error> {
     if payload.len() < 8 {
         error!("Payload too short: {} bytes", payload.len());
         return Ok(Vec::new());
     }
 
-    let entry_count = u64::from_le_bytes(payload[0..8].try_into().expect("entry count parse"));
+    let entry_count = u64::from_le_bytes(
+        payload[0..8].try_into().expect("entry count parse"),
+    );
     debug!("Entry count prefix: {}", entry_count);
     debug!("First 16 bytes of payload: {:?}", &payload[..16]);
 
@@ -61,13 +67,19 @@ pub fn deserialize_entries(payload: &[u8]) -> Result<Vec<Entry>, bincode::Error>
 const OFFSET_OF_SHRED_VARIANT: usize = SIGNATURE_BYTES;
 
 pub fn shred_data(shred: &Shred) -> Result<&[u8], Error> {
-    let variant = ShredVariant::try_from(shred.payload()[OFFSET_OF_SHRED_VARIANT])?;
+    let variant =
+        ShredVariant::try_from(shred.payload()[OFFSET_OF_SHRED_VARIANT])?;
     let (data_start, size) = match variant {
         ShredVariant::MerkleData { .. } => {
-            let size = u16::from_le_bytes([shred.payload()[0x56], shred.payload()[0x57]]) as usize;
+            let size = u16::from_le_bytes([
+                shred.payload()[0x56],
+                shred.payload()[0x57],
+            ]) as usize;
             (0x58usize, size.saturating_sub(0x58))
         }
-        ShredVariant::LegacyData => (0x56, shred.payload().len().saturating_sub(0x56)),
+        ShredVariant::LegacyData => {
+            (0x56, shred.payload().len().saturating_sub(0x56))
+        }
         _ => return Err(Error::InvalidShredVariant),
     };
 
@@ -87,7 +99,8 @@ pub fn load_shreds(raw_shreds: Vec<Vec<u8>>) -> HashMap<u64, Vec<Shred>> {
         if raw_shred.len() == 29 {
             continue;
         }
-        let shred = Shred::new_from_serialized_shred(raw_shred).expect("new shred");
+        let shred =
+            Shred::new_from_serialized_shred(raw_shred).expect("new shred");
         shreds_by_slot.entry(shred.slot()).or_default().push(shred);
     }
     shreds_by_slot
@@ -136,7 +149,8 @@ pub fn validate_and_try_repair(
     code_shreds: &[Shred],
 ) -> Result<Vec<Shred>, Box<dyn std::error::Error>> {
     let index = data_shreds.first().expect("first shred").index();
-    let aligned = data_shreds.iter().zip(index..).all(|(s, i)| s.index() == i);
+    let aligned =
+        data_shreds.iter().zip(index..).all(|(s, i)| s.index() == i);
     if !aligned {
         // find the missing indices
         let mut missing_indices = Vec::new();
@@ -152,7 +166,8 @@ pub fn validate_and_try_repair(
         info!("code shreds len: {}", code_shreds.len());
         // TODO repair here
     }
-    let aligned = data_shreds.iter().zip(index..).all(|(s, i)| s.index() == i);
+    let aligned =
+        data_shreds.iter().zip(index..).all(|(s, i)| s.index() == i);
     let data_complete = {
         let shred = data_shreds.last().expect("last shred");
         shred.data_complete() || shred.last_in_slot()
@@ -174,8 +189,10 @@ mod tests {
         std::env::set_var("RUST_LOG", "info");
         env_logger::init();
 
-        let data = std::fs::read_to_string("packets.json").expect("Failed to read packets.json");
-        let raw_shreds: Vec<Vec<u8>> = serde_json::from_str(&data).expect("Failed to parse JSON");
+        let data = std::fs::read_to_string("packets.json")
+            .expect("Failed to read packets.json");
+        let raw_shreds: Vec<Vec<u8>> =
+            serde_json::from_str(&data).expect("Failed to parse JSON");
 
         // Group shreds by slot
         let shreds_by_slot = load_shreds(raw_shreds);
@@ -188,13 +205,14 @@ mod tests {
         for (slot, slot_shreds) in shreds_by_slot {
             info!("Processing slot: {}", slot);
             let (data_shreds, code_shreds) = preprocess_shreds(slot_shreds);
-            let data_shreds = match validate_and_try_repair(&data_shreds, &code_shreds) {
-                Ok(data_shreds) => data_shreds,
-                Err(e) => {
-                    error!("Failed to validate and repair shreds: {}", e);
-                    continue;
-                }
-            };
+            let data_shreds =
+                match validate_and_try_repair(&data_shreds, &code_shreds) {
+                    Ok(data_shreds) => data_shreds,
+                    Err(e) => {
+                        error!("Failed to validate and repair shreds: {}", e);
+                        continue;
+                    }
+                };
 
             assert!(!data_shreds.is_empty());
 
@@ -203,7 +221,10 @@ mod tests {
             debug!("Deshredded data size: {}", deshredded_data.len());
             match deserialize_entries(&deshredded_data) {
                 Ok(entries) => {
-                    info!("Successfully deserialized {} entries", entries.len());
+                    info!(
+                        "Successfully deserialized {} entries",
+                        entries.len()
+                    );
                 }
                 Err(e) => error!("Failed to deserialize entries: {}", e),
             }
