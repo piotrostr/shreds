@@ -100,20 +100,3 @@ pub fn deserialize_shred(data: &[u8]) -> Result<Shred, &'static str> {
         payload,
     })
 }
-
-pub fn deserialize_entries(payload: &[u8]) -> Result<Vec<Entry>, bincode::Error> {
-    if payload.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let entry_count = u64::from_le_bytes(payload[0..8].try_into().unwrap());
-    println!("Entry count: {}", entry_count);
-    bincode::deserialize(&payload[8..])
-}
-
-#[cfg(test)]
-mod tests {
-    use std::collections::{HashMap, HashSet};
-
-    use super::*;
-}

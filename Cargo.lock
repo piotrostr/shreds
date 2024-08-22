@@ -3598,6 +3598,7 @@ dependencies = [
  "bincode",
  "env_logger 0.11.5",
  "log",
+ "reed-solomon-erasure",
  "serde",
  "serde_json",
  "solana-entry",
