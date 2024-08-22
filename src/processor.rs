@@ -18,9 +18,12 @@ type ShredsBuffer = [[u8; PACKET_SIZE]; MAX_SHREDS_PER_SLOT];
 // 65k tps at 32768 shreds per slot, dividing by 2 to save mem
 pub const MAX_SHREDS_PER_SLOT: usize = 32_768 / 2;
 
-pub const EMPTY_PACKET_BUFFER: PacketBuffer = [0; PACKET_SIZE];
-pub const EMPTY_SHREDS_BUFFER: ShredsBuffer =
-    [EMPTY_PACKET_BUFFER; MAX_SHREDS_PER_SLOT];
+fn get_empty_packet_buffer() -> PacketBuffer {
+    [0; PACKET_SIZE]
+}
+fn get_empty_shreds_buffer() -> ShredsBuffer {
+    [get_empty_packet_buffer(); MAX_SHREDS_PER_SLOT]
+}
 
 /// processor uses a special data structure setup to handle full blocks in real-time,
 /// TODO complexity
@@ -72,7 +75,7 @@ impl Processor {
         if is_code {
             self.code_shreds_by_slot
                 .entry(slot)
-                .or_insert_with(|| EMPTY_SHREDS_BUFFER);
+                .or_insert_with(get_empty_shreds_buffer);
             self.code_shreds_by_slot.entry(slot).and_modify(|v| {
                 v[shred_index as usize] =
                     raw_shred.as_slice().try_into().unwrap()
@@ -81,7 +84,7 @@ impl Processor {
         } else {
             self.data_shreds_by_slot
                 .entry(slot)
-                .or_insert_with(|| EMPTY_SHREDS_BUFFER);
+                .or_insert_with(get_empty_shreds_buffer);
             self.data_shreds_by_slot.entry(slot).and_modify(|v| {
                 v[shred_index as usize] =
                     raw_shred.as_slice().try_into().unwrap()
