@@ -1,4 +1,5 @@
 use anyhow::Result;
+use solana_ledger::shred::{ReedSolomonCache, Shredder};
 use std::collections::{HashMap, HashSet};
 
 use crate::structs::ShredVariant;
@@ -12,7 +13,7 @@ pub fn debug_shred(shred: Shred) {
         u16::from_le_bytes([shred.payload()[0x56], shred.payload()[0x57]])
             as usize;
     info!(
-        "shred: index: {}: payload: {}, size in header: {} zero freq: {} variant: {:?}",
+        "index: {}: payload: {}, size in header: {} zeros: {} variant: {:?}",
         shred.index(),
         shred.payload().len(),
         size_in_header,
@@ -47,7 +48,10 @@ pub fn deserialize_entries(
     debug!("Entry count prefix: {}", entry_count);
     debug!("First 16 bytes of payload: {:?}", &payload[..16]);
 
-    // Try to deserialize each entry individually
+    // SUPER CRUCIAL
+    // you cannot just Ok(bincode::deserialize(&payload[8..])?)
+    // since the entries are not serialized as a vec, just separate entries
+    // each next to the other, took me too long to figure this out :P
     let mut entries = Vec::new();
     let mut cursor = std::io::Cursor::new(&payload[8..]);
     for i in 0..entry_count {
@@ -91,9 +95,6 @@ pub fn shred_data(shred: &Shred) -> Result<&[u8], Error> {
 }
 
 pub fn load_shreds(raw_shreds: Vec<Vec<u8>>) -> HashMap<u64, Vec<Shred>> {
-    // TODO group the shreds by slot here but beforehand, deduplicate and perform repair using the
-    // code shreds to ensure a full block
-    // let coding_shreds = Vec::new();
     let mut shreds_by_slot: HashMap<u64, Vec<Shred>> = HashMap::new();
     for raw_shred in raw_shreds {
         if raw_shred.len() == 29 {
@@ -151,7 +152,17 @@ pub fn validate_and_try_repair(
     let index = data_shreds.first().expect("first shred").index();
     let aligned =
         data_shreds.iter().zip(index..).all(|(s, i)| s.index() == i);
-    if !aligned {
+    let data_complete = {
+        let shred = data_shreds.last().expect("last shred");
+        shred.data_complete() || shred.last_in_slot()
+    };
+    if !aligned || !data_complete {
+        if data_shreds.is_empty() {
+            return Err("No data shreds".into());
+        }
+        if code_shreds.is_empty() {
+            return Err("No code shreds".into());
+        }
         // find the missing indices
         let mut missing_indices = Vec::new();
         let mut expected_index = index;
@@ -162,18 +173,48 @@ pub fn validate_and_try_repair(
             }
             expected_index += 1;
         }
-        warn!("Missing indices: {:?}, trying to repair", missing_indices);
+        match missing_indices.len() <= code_shreds.len() {
+            true => {
+                warn!(
+                    "Missing indices: {:?}, trying to repair",
+                    missing_indices
+                );
+            }
+            false => {
+                return Err("Too many missing indices".into());
+            }
+        }
         info!("code shreds len: {}", code_shreds.len());
-        // TODO repair here
-    }
-    let aligned =
-        data_shreds.iter().zip(index..).all(|(s, i)| s.index() == i);
-    let data_complete = {
-        let shred = data_shreds.last().expect("last shred");
-        shred.data_complete() || shred.last_in_slot()
-    };
-    if !aligned || !data_complete {
-        return Err("Shreds are not aligned or data is not complete".into());
+        let data_shreds = data_shreds.to_vec();
+        // TODO stupid clone for now
+        let all_shreds = data_shreds
+            .iter()
+            .chain(code_shreds.iter())
+            .cloned()
+            .collect::<Vec<_>>();
+        let data_shreds = match Shredder::try_recovery(
+            all_shreds,
+            &ReedSolomonCache::default(),
+        ) {
+            Ok(data_shreds) => data_shreds,
+            Err(e) => {
+                error!("Failed to repair shreds: {}", e);
+                return Err(e.into());
+            }
+        };
+        let aligned =
+            data_shreds.iter().zip(index..).all(|(s, i)| s.index() == i);
+        let data_complete = {
+            let shred = data_shreds.last().expect("last shred");
+            shred.data_complete() || shred.last_in_slot()
+        };
+        if !aligned || !data_complete {
+            return Err(format!(
+                "Shreds aligned: {} complete: {}, repair no workerino",
+                aligned, data_complete
+            )
+            .into());
+        }
     }
 
     Ok(data_shreds.to_vec())
@@ -198,13 +239,18 @@ mod tests {
         let shreds_by_slot = load_shreds(raw_shreds);
 
         for (slot, shreds) in &shreds_by_slot {
-            info!("slot: {} shreds: {}", slot, shreds.len());
+            debug!("slot: {} shreds: {}", slot, shreds.len());
         }
 
         // Process shreds for each slot
         for (slot, slot_shreds) in shreds_by_slot {
-            info!("Processing slot: {}", slot);
             let (data_shreds, code_shreds) = preprocess_shreds(slot_shreds);
+            info!(
+                "Processing slot: {} (data: {}, code: {})",
+                slot,
+                data_shreds.len(),
+                code_shreds.len()
+            );
             let data_shreds =
                 match validate_and_try_repair(&data_shreds, &code_shreds) {
                     Ok(data_shreds) => data_shreds,
