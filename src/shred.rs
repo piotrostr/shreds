@@ -1,3 +1,6 @@
+use anyhow::Result;
+use std::collections::HashMap;
+
 use crate::structs::ShredVariant;
 use log::{debug, error, info};
 use solana_entry::entry::Entry;
@@ -75,11 +78,38 @@ pub fn shred_data(shred: &Shred) -> Result<&[u8], Error> {
     Ok(&shred.payload()[data_start..data_end])
 }
 
+pub fn preprocess_shreds(shreds: Vec<Vec<u8>>) -> HashMap<u64, Vec<Shred>> {
+    // TODO group the shreds by slot here but beforehand, deduplicate and perform repair using the
+    // code shreds to ensure a full block
+    // let coding_shreds = Vec::new();
+    let mut shreds_by_slot: HashMap<u64, Vec<Shred>> = HashMap::new();
+    for raw_shred in shreds {
+        if raw_shred.len() == 29 {
+            continue;
+        }
+        let shred = Shred::new_from_serialized_shred(raw_shred).unwrap();
+        shreds_by_slot.entry(shred.slot()).or_default().push(shred);
+    }
+    shreds_by_slot
+}
+
+pub fn debug_shred_sizes(raw_shreds: Vec<Vec<u8>>) {
+    let mut shred_sizes = HashMap::new();
+    for shred in raw_shreds.iter() {
+        *shred_sizes.entry(shred.len()).or_insert(0) += 1;
+    }
+    info!("shred sizes {:?}", shred_sizes);
+}
+
+pub fn deshred() -> Result<(), Box<dyn std::error::Error>> {
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
 
     use super::*;
-    use std::collections::{HashMap, HashSet};
+    use std::collections::HashSet;
 
     #[test]
     fn deserialize_shreds() {
@@ -88,21 +118,8 @@ mod tests {
         let data = std::fs::read_to_string("packets.json").expect("Failed to read packets.json");
         let raw_shreds: Vec<Vec<u8>> = serde_json::from_str(&data).expect("Failed to parse JSON");
 
-        let mut shred_sizes = HashMap::new();
-        for shred in raw_shreds.iter() {
-            *shred_sizes.entry(shred.len()).or_insert(0) += 1;
-        }
-        info!("shred sizes {:?}", shred_sizes);
-
         // Group shreds by slot
-        let mut shreds_by_slot: HashMap<u64, Vec<Shred>> = HashMap::new();
-        for raw_shred in raw_shreds {
-            if raw_shred.len() == 29 {
-                continue;
-            }
-            let shred = Shred::new_from_serialized_shred(raw_shred).unwrap();
-            shreds_by_slot.entry(shred.slot()).or_default().push(shred);
-        }
+        let shreds_by_slot = preprocess_shreds(raw_shreds);
 
         for (slot, shreds) in &shreds_by_slot {
             info!("slot: {} shreds: {}", slot, shreds.len());
