@@ -9,10 +9,10 @@ use tokio::time::{sleep, Duration};
 
 use crate::shred::debug_shred;
 
-pub const MAX_PACKET_SIZE: usize = 1280;
+pub const PACKET_SIZE: usize = 1280 - 40 - 8;
 
 pub async fn listen(socket: Arc<UdpSocket>, received_packets: Arc<Mutex<Vec<Vec<u8>>>>) {
-    let mut buf = [0u8; MAX_PACKET_SIZE]; // max shred size
+    let mut buf = [0u8; PACKET_SIZE]; // max shred size
     loop {
         match socket.recv_from(&mut buf).await {
             Ok((received, _)) => {
@@ -27,7 +27,7 @@ pub async fn listen(socket: Arc<UdpSocket>, received_packets: Arc<Mutex<Vec<Vec<
 }
 
 pub async fn listen_and_deserialize(socket: Arc<UdpSocket>) {
-    let mut buf = [0u8; MAX_PACKET_SIZE]; // max shred size
+    let mut buf = [0u8; PACKET_SIZE]; // max shred size
     loop {
         match socket.recv_from(&mut buf).await {
             Ok((received, _)) => {
