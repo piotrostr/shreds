@@ -1,13 +1,10 @@
 use log::{error, info};
-use solana_ledger::shred::Shred;
 use std::io::Write;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::signal;
 use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration};
-
-use crate::shred::debug_shred;
 
 pub const PACKET_SIZE: usize = 1280 - 40 - 8;
 
@@ -21,26 +18,6 @@ pub async fn listen(
             Ok((received, _)) => {
                 let packet = Vec::from(&buf[..received]);
                 received_packets.lock().await.push(packet);
-            }
-            Err(e) => {
-                error!("Error receiving packet: {:?}", e);
-            }
-        }
-    }
-}
-
-pub async fn listen_and_deserialize(socket: Arc<UdpSocket>) {
-    let mut buf = [0u8; PACKET_SIZE]; // max shred size
-    loop {
-        match socket.recv_from(&mut buf).await {
-            Ok((received, _)) => {
-                let packet = Vec::from(&buf[..received]);
-                match Shred::new_from_serialized_shred(packet) {
-                    Ok(shred) => debug_shred(shred),
-                    Err(e) => {
-                        error!("Error deserializing shred: {:?}", e);
-                    }
-                };
             }
             Err(e) => {
                 error!("Error receiving packet: {:?}", e);

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use solana_ledger::shred::{ReedSolomonCache, Shredder};
+use solana_ledger::shred::{ReedSolomonCache, ShredFlags, Shredder};
 use std::collections::{HashMap, HashSet};
 
 use crate::structs::ShredVariant;
@@ -220,6 +220,30 @@ pub fn validate_and_try_repair(
     Ok(data_shreds.to_vec())
 }
 
+pub fn get_shred_index(
+    raw_shred: &[u8],
+) -> Result<u32, Box<dyn std::error::Error>> {
+    Ok(u32::from_le_bytes(raw_shred[0x49..0x49 + 4].try_into()?))
+}
+
+pub fn get_shred_is_last(
+    raw_shred: &[u8],
+) -> Result<bool, Box<dyn std::error::Error>> {
+    match raw_shred.get(0x55) {
+        Some(flags) => {
+            let flags = ShredFlags::from_bits(*flags).expect("parse flags");
+            if flags.contains(ShredFlags::DATA_COMPLETE_SHRED)
+                || flags.contains(ShredFlags::LAST_SHRED_IN_SLOT)
+            {
+                Ok(true)
+            } else {
+                Ok(false)
+            }
+        }
+        None => Err("Error getting flags".into()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -234,6 +258,21 @@ mod tests {
             .expect("Failed to read packets.json");
         let raw_shreds: Vec<Vec<u8>> =
             serde_json::from_str(&data).expect("Failed to parse JSON");
+
+        // debugging, useful
+        // {
+        //     let shreds = raw_shreds.iter().map(|shred| {
+        //         deserialize_shred(shred.clone()).expect("shred")
+        //     });
+        //     for shred in shreds.take(1000) {
+        //         info!(
+        //             "{} shred: {} {}",
+        //             shred.slot(),
+        //             shred.index(),
+        //             shred.data_complete()
+        //         );
+        //     }
+        // }
 
         // Group shreds by slot
         let shreds_by_slot = load_shreds(raw_shreds);
