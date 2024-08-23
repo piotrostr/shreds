@@ -1,16 +1,12 @@
 use log::{debug, error, info};
 use solana_entry::entry::Entry;
-use solana_sdk::transaction::VersionedTransaction;
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
-use tokio::sync::RwLock;
 
 use solana_ledger::shred::{layout, Shred, ShredId};
 use solana_sdk::clock::Slot;
 
 use crate::shred::{
-    deserialize_entries, deshred, get_shred_data_flags,
-    get_shred_debug_string, get_shred_index,
+    deserialize_entries, deshred, get_shred_data_flags, get_shred_index,
 };
 use crate::structs::ShredVariant;
 
@@ -28,7 +24,6 @@ struct BatchInfo {
 pub struct Processor {
     data_shreds: HashMap<Slot, HashMap<u8, BatchInfo>>,
     uniqueness: HashSet<ShredId>,
-    transactions: Arc<RwLock<HashMap<Slot, Vec<VersionedTransaction>>>>,
 }
 
 impl Processor {
@@ -36,7 +31,6 @@ impl Processor {
         Processor {
             data_shreds: HashMap::new(),
             uniqueness: HashSet::new(),
-            transactions: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -81,9 +75,9 @@ impl Processor {
         if let Some(slot_map) = self.data_shreds.get_mut(&slot) {
             if let Some(batch_info) = slot_map.get_mut(&batch_tick) {
                 if batch_info.is_last_shred && is_batch_ready(batch_info) {
-                    debug!("Processing Slot {} Batch {}", slot, batch_tick);
+                    debug!("Sending Slot {} Batch {}", slot, batch_tick);
                     let batch_shreds = std::mem::take(&mut batch_info.shreds);
-                    let _ = tokio::spawn({
+                    tokio::spawn({
                         // let transactions = self.transactions.clone();
                         async move {
                             let entries = handle_batch(
@@ -98,7 +92,7 @@ impl Processor {
                                     })
                                     .collect::<Vec<_>>();
                                 info!(
-                                    "Slot {} Batch {} has {} txs",
+                                    "Batch {}-{} has {} txs",
                                     slot,
                                     batch_tick,
                                     new_transactions.len(),
@@ -110,16 +104,11 @@ impl Processor {
                                         .flat_map(|t| t.signatures.clone())
                                         .collect::<Vec<_>>()
                                 );
-                                // let mut transactions =
-                                //     transactions.write().await;
-                                // transactions
-                                //     .entry(slot)
-                                //     .or_default()
-                                //     .extend(new_transactions);
+                                drop(entries);
+                                drop(new_transactions);
                             }
                         }
-                    })
-                    .await;
+                    });
 
                     // Remove the processed batch
                     slot_map.remove(&batch_tick);
@@ -156,6 +145,16 @@ impl Processor {
     }
 }
 
+fn is_batch_ready(batch_info: &BatchInfo) -> bool {
+    if !batch_info.is_last_shred {
+        return false;
+    }
+
+    let expected_count =
+        batch_info.highest_index - batch_info.lowest_index + 1;
+    batch_info.shreds.len() as u32 == expected_count
+}
+
 #[timed::timed(duration(printer = "info!"))]
 pub async fn handle_batch(
     mut raw_shreds: Vec<Vec<u8>>,
@@ -182,31 +181,18 @@ pub async fn handle_batch(
     debug!("Deshredded data size: {}", deshredded_data.len());
     match deserialize_entries(&deshredded_data) {
         Ok(entries) => {
-            info!("Successfully deserialized {} entries", entries.len());
+            debug!("Successfully deserialized {} entries", entries.len());
             Ok(entries)
         }
         Err(e) => {
-            let debug_shreds = shreds
-                .iter()
-                .map(|s| get_shred_debug_string(s.clone()))
-                .collect::<Vec<_>>();
-            error!(
-                "Failed to deserialize entries: {:?} {:#?}",
-                e, debug_shreds
-            );
+            // let debug_shreds = shreds
+            //     .iter()
+            //     .map(|s| get_shred_debug_string(s.clone()))
+            //     .collect::<Vec<_>>();
+            error!("Failed to deserialize entries: {:?}", e);
             Err(e)
         }
     }
-}
-
-fn is_batch_ready(batch_info: &BatchInfo) -> bool {
-    if !batch_info.is_last_shred {
-        return false;
-    }
-
-    let expected_count =
-        batch_info.highest_index - batch_info.lowest_index + 1;
-    batch_info.shreds.len() as u32 == expected_count
 }
 
 #[cfg(test)]
