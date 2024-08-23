@@ -9,7 +9,7 @@ services:
       - BLOCK_ENGINE_URL=https://amsterdam.mainnet.block-engine.jito.wtf
       - AUTH_KEYPAIR=auth.json
       - DESIRED_REGIONS=amsterdam
-      - DEST_IP_PORTS=shreds:8001
+      - DEST_IP_PORTS=0.0.0.0:8001
     volumes:
       - ./auth.json:/app/auth.json
     network_mode: host

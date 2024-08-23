@@ -1,4 +1,4 @@
-FROM rust:1.79 as builder
+FROM rust:1.79 AS builder
 
 RUN apt-get update && apt-get install -y \
     build-essential \
@@ -33,7 +33,7 @@ COPY ./src ./src
 # Build for release
 RUN cargo build --release
 
-FROM ubuntu:22.04 as runner
+FROM ubuntu:22.04 AS runner
 
 RUN apt-get update && apt-get install -y \
     ca-certificates \
