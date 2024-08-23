@@ -1,0 +1,26 @@
+services:
+  jito-shredstream-proxy:
+    platform: linux/amd64
+    image: jitolabs/jito-shredstream-proxy
+    container_name: jito-shredstream-proxy
+    command: shredstream
+    environment:
+      - RUST_LOG=info
+      - BLOCK_ENGINE_URL=https://amsterdam.mainnet.block-engine.jito.wtf
+      - AUTH_KEYPAIR=auth.json
+      - DESIRED_REGIONS=amsterdam
+      - DEST_IP_PORTS=shreds:8001
+    volumes:
+      - ./auth.json:/app/auth.json
+    network_mode: host
+
+  shreds:
+    image: piotrostr/shreds
+    platform: linux/amd64
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: shreds
+    command: ["./shreds", "--bind", "0.0.0.0:8001"]
+    ports:
+      - "8001:8001/udp"

@@ -1,0 +1,6 @@
+**/packets.json
+**/shredstream-proxy
+target
+shredstream-proxy/target
+shredstream-proxy/**/**/*.rs.bk
+shredstream-proxy/**
