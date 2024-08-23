@@ -1,4 +1,4 @@
-use log::{debug, error, info};
+use log::{debug, error};
 use solana_entry::entry::Entry;
 use std::collections::{HashMap, HashSet};
 use tokio::sync::mpsc;
@@ -196,6 +196,7 @@ pub async fn handle_batch(
 mod tests {
 
     use super::*;
+    use crate::algo;
 
     #[tokio::test]
     async fn processor_works() {
@@ -209,29 +210,15 @@ mod tests {
         let raw_shreds: Vec<Vec<u8>> =
             serde_json::from_str(&data).expect("Failed to parse JSON");
 
-        let (entry_sender, mut entry_receiver) = mpsc::channel(2000);
-        let (error_sender, mut error_receiver) = mpsc::channel(2000);
+        let (entry_sender, entry_receiver) = mpsc::channel(2000);
+        let (error_sender, error_receiver) = mpsc::channel(2000);
 
         let mut processor = Processor::new(entry_sender, error_sender);
         for raw_shred in raw_shreds {
             processor.collect(raw_shred).await;
         }
 
-        tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    Some(entry) = entry_receiver.recv() => {
-                        info!("OK: entries {} txs: {}",
-                            entry.len(),
-                            entry.iter().map(|e| e.transactions.len()).sum::<usize>(),
-                        );
-                    }
-                    Some(error) = error_receiver.recv() => {
-                        error!("{}", error);
-                    }
-                }
-            }
-        });
+        algo::receive_entries(entry_receiver, error_receiver).await;
 
         for handle in processor.handles.drain(..) {
             handle.await.expect("Failed to process batch");

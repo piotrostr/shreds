@@ -7,7 +7,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .filter_level(log::LevelFilter::Info)
         .init();
 
-    listener::run_listener_with_processor().await?;
+    listener::run_listener_with_algo().await?;
 
     Ok(())
 }

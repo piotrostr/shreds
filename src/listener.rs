@@ -6,6 +6,7 @@ use tokio::signal;
 use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration};
 
+use crate::algo;
 use crate::processor::Processor;
 
 pub const PACKET_SIZE: usize = 1280 - 40 - 8;
@@ -39,16 +40,16 @@ pub async fn dump_to_file(received_packets: Arc<Mutex<Vec<Vec<u8>>>>) {
     info!("Packets dumped to packets.json");
 }
 
-pub async fn run_listener_with_processor(
-) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn run_listener_with_algo() -> Result<(), Box<dyn std::error::Error>>
+{
     let bind_addr = "0.0.0.0:8001";
     let socket = Arc::new(
         UdpSocket::bind(bind_addr)
             .await
             .expect("Couldn't bind to address"),
     );
-    let (entry_sender, mut entry_receiver) = tokio::sync::mpsc::channel(2000);
-    let (error_sender, mut error_receiver) = tokio::sync::mpsc::channel(2000);
+    let (entry_sender, entry_receiver) = tokio::sync::mpsc::channel(2000);
+    let (error_sender, error_receiver) = tokio::sync::mpsc::channel(2000);
     let mut processor = Processor::new(entry_sender, error_sender);
 
     let mut buf = [0u8; PACKET_SIZE]; // max shred size
@@ -66,22 +67,7 @@ pub async fn run_listener_with_processor(
         }
     });
 
-    tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                Some(entry) = entry_receiver.recv() => {
-                    info!("OK: entries {} txs: {}",
-                        entry.len(),
-                        entry.iter().map(|e| e.transactions.len()).sum::<usize>(),
-                    );
-                }
-                Some(error) = error_receiver.recv() => {
-                    error!("{}", error);
-                }
-            }
-        }
-    });
-
+    algo::receive_entries(entry_receiver, error_receiver).await;
     signal::ctrl_c().await.expect("Failed to listen for Ctrl+C");
 
     Ok(())
