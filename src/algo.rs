@@ -107,7 +107,6 @@ pub fn process_entries_batch(
             ) {
                 info!("OK: Found Raydium AMM tx {:?}", tx.signatures);
                 pools_state.raydium_amm_count += 1;
-                println!("{:?}", tx);
             };
         }
     }
