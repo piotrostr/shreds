@@ -40,9 +40,9 @@ pub async fn dump_to_file(received_packets: Arc<Mutex<Vec<Vec<u8>>>>) {
     info!("Packets dumped to packets.json");
 }
 
-pub async fn run_listener_with_algo() -> Result<(), Box<dyn std::error::Error>>
-{
-    let bind_addr = "0.0.0.0:8001";
+pub async fn run_listener_with_algo(
+    bind_addr: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     let socket = Arc::new(
         UdpSocket::bind(bind_addr)
             .await
@@ -73,10 +73,9 @@ pub async fn run_listener_with_algo() -> Result<(), Box<dyn std::error::Error>>
     Ok(())
 }
 
-/// method used for data collection
-pub async fn run_listener_with_save() -> Result<(), Box<dyn std::error::Error>>
-{
-    let bind_addr = "0.0.0.0:8001";
+pub async fn run_listener_with_save(
+    bind_addr: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     let socket = Arc::new(
         UdpSocket::bind(bind_addr)
             .await
@@ -109,3 +108,4 @@ pub async fn run_listener_with_save() -> Result<(), Box<dyn std::error::Error>>
 
     Ok(())
 }
+

@@ -1,3 +1,4 @@
+*.json
 packets.json
 shredstream-proxy
 /target
