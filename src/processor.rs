@@ -24,6 +24,7 @@ struct BatchInfo {
 pub struct Processor {
     data_shreds: HashMap<Slot, HashMap<u8, BatchInfo>>,
     uniqueness: HashSet<ShredId>,
+    handles: Vec<tokio::task::JoinHandle<()>>,
 }
 
 impl Processor {
@@ -31,6 +32,7 @@ impl Processor {
         Processor {
             data_shreds: HashMap::new(),
             uniqueness: HashSet::new(),
+            handles: Vec::new(),
         }
     }
 
@@ -77,8 +79,8 @@ impl Processor {
                 if batch_info.is_last_shred && is_batch_ready(batch_info) {
                     debug!("Sending Slot {} Batch {}", slot, batch_tick);
                     let batch_shreds = std::mem::take(&mut batch_info.shreds);
-                    tokio::spawn({
-                        // let transactions = self.transactions.clone();
+                    // let transactions = self.transactions.clone();
+                    let handle = tokio::spawn({
                         async move {
                             let entries = handle_batch(
                                 batch_shreds.into_values().collect(),
@@ -109,6 +111,7 @@ impl Processor {
                             }
                         }
                     });
+                    self.handles.push(handle);
 
                     // Remove the processed batch
                     slot_map.remove(&batch_tick);
@@ -157,17 +160,16 @@ fn is_batch_ready(batch_info: &BatchInfo) -> bool {
 
 #[timed::timed(duration(printer = "info!"))]
 pub async fn handle_batch(
-    mut raw_shreds: Vec<Vec<u8>>,
+    raw_shreds: Vec<Vec<u8>>,
 ) -> Result<Vec<Entry>, Box<dyn std::error::Error>> {
-    info!("Processing batch with {} shreds", raw_shreds.len());
+    debug!("Processing batch with {} shreds", raw_shreds.len());
 
-    // Sort shreds by index
-    raw_shreds.sort_by_key(|shred| get_shred_index(shred).unwrap());
-
-    let shreds = raw_shreds
+    let mut shreds = raw_shreds
         .into_iter()
         .map(|raw_shred| Shred::new_from_serialized_shred(raw_shred).unwrap())
         .collect::<Vec<_>>();
+
+    shreds.sort_by_key(|shred| shred.index());
 
     assert!(!shreds.is_empty());
     assert!(shreds.iter().all(|shred| shred.is_data()));
@@ -214,6 +216,9 @@ mod tests {
         for chunk in raw_shreds.chunks(100) {
             for raw_shred in chunk {
                 processor.collect(raw_shred.to_vec()).await;
+            }
+            for handle in processor.handles.drain(..) {
+                handle.await.expect("Failed to process batch");
             }
         }
     }

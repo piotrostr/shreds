@@ -6,6 +6,8 @@ use tokio::signal;
 use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration};
 
+use crate::processor::Processor;
+
 pub const PACKET_SIZE: usize = 1280 - 40 - 8;
 
 pub async fn listen(
@@ -37,7 +39,39 @@ pub async fn dump_to_file(received_packets: Arc<Mutex<Vec<Vec<u8>>>>) {
     info!("Packets dumped to packets.json");
 }
 
-pub async fn run_listener() -> Result<(), Box<dyn std::error::Error>> {
+pub async fn run_listener_with_processor(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let bind_addr = "0.0.0.0:8001";
+    let socket = Arc::new(
+        UdpSocket::bind(bind_addr)
+            .await
+            .expect("Couldn't bind to address"),
+    );
+    let mut processor = Processor::new();
+
+    let mut buf = [0u8; PACKET_SIZE]; // max shred size
+    tokio::spawn(async move {
+        loop {
+            match socket.recv_from(&mut buf).await {
+                Ok((received, _)) => {
+                    let packet = Vec::from(&buf[..received]);
+                    processor.collect(packet).await;
+                }
+                Err(e) => {
+                    error!("Error receiving packet: {:?}", e);
+                }
+            }
+        }
+    });
+
+    signal::ctrl_c().await.expect("Failed to listen for Ctrl+C");
+
+    Ok(())
+}
+
+/// method used for data collection
+pub async fn run_listener_with_save() -> Result<(), Box<dyn std::error::Error>>
+{
     let bind_addr = "0.0.0.0:8001";
     let socket = Arc::new(
         UdpSocket::bind(bind_addr)
