@@ -36,7 +36,7 @@ pub fn process_entries_batch(entries: Vec<Entry>) {
             if tx.message.static_account_keys().contains(
                 &Pubkey::from_str(WHIRLPOOL).expect("Failed to parse pubkey"),
             ) {
-                info!("OK: Found whirlpool tx {:#?}", tx);
+                info!("OK: Found whirlpool tx {:?}", tx.signatures);
             };
         }
     }

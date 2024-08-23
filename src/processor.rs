@@ -1,6 +1,7 @@
 use log::{debug, error};
 use solana_entry::entry::Entry;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use solana_ledger::shred::{layout, Shred, ShredId};
@@ -15,7 +16,7 @@ pub const MAX_SHREDS_PER_SLOT: usize = 32_768 / 2;
 
 #[derive(Debug)]
 struct BatchInfo {
-    shreds: HashMap<u32, Vec<u8>>,
+    shreds: HashMap<u32, Arc<Vec<u8>>>,
     highest_index: u32,
     lowest_index: u32,
     is_last_shred: bool,
@@ -44,7 +45,7 @@ impl Processor {
         }
     }
 
-    pub async fn insert(&mut self, slot: Slot, raw_shred: Vec<u8>) {
+    pub async fn insert(&mut self, slot: Slot, raw_shred: Arc<Vec<u8>>) {
         let variant_raw = raw_shred.get(0x40).expect("grab variant");
         let variant =
             ShredVariant::try_from(*variant_raw).expect("parse variant");
@@ -133,7 +134,7 @@ impl Processor {
         }
     }
 
-    pub async fn collect(&mut self, raw_shred: Vec<u8>) {
+    pub async fn collect(&mut self, raw_shred: Arc<Vec<u8>>) {
         if raw_shred.len() < 0x58 {
             return;
         }
@@ -162,13 +163,16 @@ fn is_batch_ready(batch_info: &BatchInfo) -> bool {
 }
 
 pub async fn handle_batch(
-    raw_shreds: Vec<Vec<u8>>,
+    raw_shreds: Vec<Arc<Vec<u8>>>,
 ) -> Result<Vec<Entry>, Box<dyn std::error::Error + Send + Sync>> {
     debug!("Processing batch with {} shreds", raw_shreds.len());
 
+    // only copy the data when already in a new thread
     let mut shreds = raw_shreds
         .into_iter()
-        .map(|raw_shred| Shred::new_from_serialized_shred(raw_shred).unwrap())
+        .map(|raw_shred| {
+            Shred::new_from_serialized_shred(raw_shred.to_vec()).unwrap()
+        })
         .collect::<Vec<_>>();
 
     shreds.sort_by_key(|shred| shred.index());
@@ -215,7 +219,7 @@ mod tests {
 
         let mut processor = Processor::new(entry_sender, error_sender);
         for raw_shred in raw_shreds {
-            processor.collect(raw_shred).await;
+            processor.collect(Arc::new(raw_shred)).await;
         }
 
         algo::receive_entries(entry_receiver, error_receiver).await;

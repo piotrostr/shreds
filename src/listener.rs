@@ -58,7 +58,7 @@ pub async fn run_listener_with_algo() -> Result<(), Box<dyn std::error::Error>>
             match socket.recv_from(&mut buf).await {
                 Ok((received, _)) => {
                     let packet = Vec::from(&buf[..received]);
-                    processor.collect(packet).await;
+                    processor.collect(Arc::new(packet)).await;
                 }
                 Err(e) => {
                     error!("Error receiving packet: {:?}", e);
