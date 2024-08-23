@@ -2,64 +2,41 @@ use log::{debug, error, info};
 use solana_entry::entry::Entry;
 use solana_sdk::transaction::VersionedTransaction;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 use solana_ledger::shred::{layout, Shred, ShredId};
 use solana_sdk::clock::Slot;
 
-use crate::listener::PACKET_SIZE;
 use crate::shred::{
-    deserialize_entries, deshred, get_shred_index, get_shred_is_last,
+    deserialize_entries, deshred, get_shred_data_flags,
+    get_shred_debug_string, get_shred_index,
 };
 use crate::structs::ShredVariant;
 
-type PacketBuffer = [u8; PACKET_SIZE];
-type ShredsBuffer = [[u8; PACKET_SIZE]; MAX_SHREDS_PER_SLOT];
-
-// 65k tps at 32768 shreds per slot, dividing by 2 to save mem
 pub const MAX_SHREDS_PER_SLOT: usize = 32_768 / 2;
 
-fn get_empty_packet_buffer() -> PacketBuffer {
-    [0; PACKET_SIZE]
-}
-fn get_empty_shreds_buffer() -> ShredsBuffer {
-    [get_empty_packet_buffer(); MAX_SHREDS_PER_SLOT]
+#[derive(Debug)]
+struct BatchInfo {
+    shreds: HashMap<u32, Vec<u8>>,
+    highest_index: u32,
+    lowest_index: u32,
+    is_last_shred: bool,
 }
 
-/// processor uses a special data structure setup to handle full blocks in real-time,
-/// TODO complexity
-/// this should be a sorted map with a hash set for uniqueness within the vectors
-/// keep the shreds sorted by slot
-/// now checking for sortedness is O(n), but since we get the information about the
-/// data completedness, once we know that the last slot is in, and the map is sorted
-/// at all times, it is only about checking the last slot index and total length
-/// on each new entry
-/// the shreds_by_slot map is accessible through a method, so it is possible to add a callback to
-/// check if the slot has the final shred and then compare from the moment flag is set
-/// also, those maps and the uniqueness set should be cleared after the slot is processed in
-/// handle_slot to free up memory (otherwise it will grow indefinitely)
 #[derive(Debug, Default)]
 pub struct Processor {
-    data_shreds_by_slot: HashMap<Slot, ShredsBuffer>,
-    code_shreds_by_slot: HashMap<Slot, ShredsBuffer>,
-
-    data_shreds_counter: HashMap<Slot, u32>,
-    code_shreds_counter: HashMap<Slot, u32>,
+    data_shreds: HashMap<Slot, HashMap<u8, BatchInfo>>,
     uniqueness: HashSet<ShredId>,
-    last_shred_index: HashMap<Slot, u32>,
-
-    transactions: HashMap<Slot, Vec<VersionedTransaction>>,
+    transactions: Arc<RwLock<HashMap<Slot, Vec<VersionedTransaction>>>>,
 }
 
 impl Processor {
     pub fn new() -> Self {
         Processor {
-            data_shreds_by_slot: HashMap::new(),
-            code_shreds_by_slot: HashMap::new(),
-            data_shreds_counter: HashMap::new(),
-            code_shreds_counter: HashMap::new(),
+            data_shreds: HashMap::new(),
             uniqueness: HashSet::new(),
-            last_shred_index: HashMap::new(),
-            transactions: HashMap::new(),
+            transactions: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -69,60 +46,99 @@ impl Processor {
             ShredVariant::try_from(*variant_raw).expect("parse variant");
         let is_code = matches!(variant, ShredVariant::MerkleCode { .. })
             || matches!(variant, ShredVariant::LegacyCode { .. });
-        let is_last = get_shred_is_last(&raw_shred).expect("is last check");
-        let shred_index = get_shred_index(&raw_shred).expect("get index");
-        // push the shred to the appropriate map
-        if is_code {
-            self.code_shreds_by_slot
-                .entry(slot)
-                .or_insert_with(get_empty_shreds_buffer);
-            self.code_shreds_by_slot.entry(slot).and_modify(|v| {
-                v[shred_index as usize] =
-                    raw_shred.as_slice().try_into().unwrap()
-            });
-            self.code_shreds_counter.entry(slot).and_modify(|v| *v += 1);
-        } else {
-            self.data_shreds_by_slot
-                .entry(slot)
-                .or_insert_with(get_empty_shreds_buffer);
-            self.data_shreds_by_slot.entry(slot).and_modify(|v| {
-                v[shred_index as usize] =
-                    raw_shred.as_slice().try_into().unwrap()
-            });
-            self.data_shreds_counter.entry(slot).and_modify(|v| *v += 1);
-        }
-        // insert the last index if this is the last shred
-        if is_last {
-            self.last_shred_index.insert(slot, shred_index);
-        }
+        let shred_index =
+            get_shred_index(&raw_shred).expect("get index") as u32;
+        let (_, batch_complete, batch_tick) =
+            get_shred_data_flags(&raw_shred);
 
-        // regardless of the last shred, check if the slot is complete
-        // (data might have not all came in but the final shred is there, we wait for more data in
-        // that case shreds too)
-        let last_index = self.last_shred_index.get(&slot);
-        if last_index.is_some()
-            && *self.data_shreds_counter.get(&slot).unwrap()
-                == *last_index.unwrap()
-        {
-            // get populated chunk (only part of the allocated buffer)
-            let raw_shreds = self.data_shreds_by_slot.remove(&slot).unwrap()
-                [..*last_index.unwrap() as usize]
-                .to_vec();
-            // process shreds if this is the last one
-            // send this through channel rather than spwaning thread in general
-            tokio::spawn({
-                async move {
-                    let _ = handle_slot(&raw_shreds).await;
-                }
-            });
+        if !is_code {
+            let batch_info = self
+                .data_shreds
+                .entry(slot)
+                .or_default()
+                .entry(batch_tick)
+                .or_insert_with(|| BatchInfo {
+                    shreds: HashMap::new(),
+                    highest_index: 0,
+                    lowest_index: u32::MAX,
+                    is_last_shred: false,
+                });
+
+            batch_info.shreds.insert(shred_index, raw_shred);
+            batch_info.highest_index =
+                batch_info.highest_index.max(shred_index);
+            batch_info.lowest_index =
+                batch_info.lowest_index.min(shred_index);
+
+            if batch_complete {
+                batch_info.is_last_shred = true;
+                self.process_batch(slot, batch_tick).await;
+            }
         }
     }
 
-    // TODO it might make sense to process shreds in batches,
-    // looking at reference tick too
+    async fn process_batch(&mut self, slot: Slot, batch_tick: u8) {
+        if let Some(slot_map) = self.data_shreds.get_mut(&slot) {
+            if let Some(batch_info) = slot_map.get_mut(&batch_tick) {
+                if batch_info.is_last_shred && is_batch_ready(batch_info) {
+                    debug!("Processing Slot {} Batch {}", slot, batch_tick);
+                    let batch_shreds = std::mem::take(&mut batch_info.shreds);
+                    let _ = tokio::spawn({
+                        // let transactions = self.transactions.clone();
+                        async move {
+                            let entries = handle_batch(
+                                batch_shreds.into_values().collect(),
+                            )
+                            .await;
+                            if let Ok(entries) = entries {
+                                let new_transactions = entries
+                                    .iter()
+                                    .flat_map(|entry| {
+                                        entry.transactions.clone()
+                                    })
+                                    .collect::<Vec<_>>();
+                                info!(
+                                    "Slot {} Batch {} has {} txs",
+                                    slot,
+                                    batch_tick,
+                                    new_transactions.len(),
+                                );
+                                debug!(
+                                    "Transactions: {:#?}",
+                                    new_transactions
+                                        .iter()
+                                        .flat_map(|t| t.signatures.clone())
+                                        .collect::<Vec<_>>()
+                                );
+                                // let mut transactions =
+                                //     transactions.write().await;
+                                // transactions
+                                //     .entry(slot)
+                                //     .or_default()
+                                //     .extend(new_transactions);
+                            }
+                        }
+                    })
+                    .await;
+
+                    // Remove the processed batch
+                    slot_map.remove(&batch_tick);
+
+                    // If the slot map is empty, remove it as well
+                    if slot_map.is_empty() {
+                        self.data_shreds.remove(&slot);
+                    }
+                } else {
+                    debug!(
+                        "Slot {} Batch {} is not ready for processing",
+                        slot, batch_tick
+                    );
+                }
+            }
+        }
+    }
+
     pub async fn collect(&mut self, raw_shred: Vec<u8>) {
-        // check if it is at least the common header size
-        // i suspect shredstream also sends like ping udps, some packets are 29 bytes
         if raw_shred.len() < 0x58 {
             return;
         }
@@ -131,7 +147,6 @@ impl Processor {
                 if !self.uniqueness.insert(shred_id) {
                     return;
                 }
-
                 self.insert(shred_id.slot(), raw_shred.clone()).await;
             }
             None => {
@@ -141,32 +156,28 @@ impl Processor {
     }
 }
 
-/// handle_slot should only be called when all shreds for a slot are received
-/// and there are no missing shreds
-pub async fn handle_slot(
-    raw_shreds: &[[u8; 1232]],
+#[timed::timed(duration(printer = "info!"))]
+pub async fn handle_batch(
+    mut raw_shreds: Vec<Vec<u8>>,
 ) -> Result<Vec<Entry>, Box<dyn std::error::Error>> {
+    info!("Processing batch with {} shreds", raw_shreds.len());
+
+    // Sort shreds by index
+    raw_shreds.sort_by_key(|shred| get_shred_index(shred).unwrap());
+
     let shreds = raw_shreds
-        .iter()
-        .map(|raw_shred| {
-            Shred::new_from_serialized_shred(raw_shred.to_vec()).unwrap()
-        })
+        .into_iter()
+        .map(|raw_shred| Shred::new_from_serialized_shred(raw_shred).unwrap())
         .collect::<Vec<_>>();
 
     assert!(!shreds.is_empty());
-
-    // check if all are data
     assert!(shreds.iter().all(|shred| shred.is_data()));
 
-    // check if all are aligned
-    let index = shreds.first().expect("first shred").index();
-    assert!(shreds.iter().zip(index..).all(|(s, i)| s.index() == i));
+    // Check if batch complete
+    let last = shreds.last().expect("last shred");
+    assert!(last.data_complete());
 
-    // check if data complete
-    let last = shreds.iter().last().expect("last shred");
-    assert!(last.last_in_slot() || last.data_complete());
-
-    // process shreds
+    // Process shreds
     let deshredded_data = deshred(&shreds);
     debug!("Deshredded data size: {}", deshredded_data.len());
     match deserialize_entries(&deshredded_data) {
@@ -175,10 +186,27 @@ pub async fn handle_slot(
             Ok(entries)
         }
         Err(e) => {
-            error!("Failed to deserialize entries: {:?}", e);
+            let debug_shreds = shreds
+                .iter()
+                .map(|s| get_shred_debug_string(s.clone()))
+                .collect::<Vec<_>>();
+            error!(
+                "Failed to deserialize entries: {:?} {:#?}",
+                e, debug_shreds
+            );
             Err(e)
         }
     }
+}
+
+fn is_batch_ready(batch_info: &BatchInfo) -> bool {
+    if !batch_info.is_last_shred {
+        return false;
+    }
+
+    let expected_count =
+        batch_info.highest_index - batch_info.lowest_index + 1;
+    batch_info.shreds.len() as u32 == expected_count
 }
 
 #[cfg(test)]

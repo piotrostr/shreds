@@ -8,6 +8,21 @@ use solana_entry::entry::Entry;
 use solana_ledger::shred::{Error, Shred};
 use solana_sdk::signature::SIGNATURE_BYTES;
 
+pub fn get_shred_debug_string(shred: Shred) -> String {
+    let (block_complete, batch_complete, batch_tick) =
+        get_shred_data_flags(shred.payload());
+    format!(
+        "{} {} shred: {} {} {} {}",
+        shred.slot(),
+        shred.index(),
+        u16::from_le_bytes([shred.payload()[0x56], shred.payload()[0x57]])
+            as usize, // size
+        block_complete,
+        batch_complete,
+        batch_tick
+    )
+}
+
 pub fn debug_shred(shred: Shred) {
     let size_in_header =
         u16::from_le_bytes([shred.payload()[0x56], shred.payload()[0x57]])
@@ -36,7 +51,7 @@ pub fn deserialize_shred(data: Vec<u8>) -> Result<Shred, Error> {
 
 pub fn deserialize_entries(
     payload: &[u8],
-) -> Result<Vec<Entry>, bincode::Error> {
+) -> Result<Vec<Entry>, Box<dyn std::error::Error>> {
     if payload.len() < 8 {
         error!("Payload too short: {} bytes", payload.len());
         return Ok(Vec::new());
@@ -45,6 +60,9 @@ pub fn deserialize_entries(
     let entry_count = u64::from_le_bytes(
         payload[0..8].try_into().expect("entry count parse"),
     );
+    if entry_count > 100_000 {
+        return Err(format!("Entry count too large: {}", entry_count).into());
+    }
     debug!("Entry count prefix: {}", entry_count);
     debug!("First 16 bytes of payload: {:?}", &payload[..16]);
 
@@ -60,7 +78,10 @@ pub fn deserialize_entries(
                 entries.push(entry);
             }
             Err(e) => {
-                error!("Failed to deserialize entry {}: {}", i, e);
+                error!(
+                    "Failed to deserialize entry {}/{}: {}",
+                    i, entry_count, e
+                );
             }
         }
     }
@@ -181,7 +202,11 @@ pub fn validate_and_try_repair(
                 );
             }
             false => {
-                return Err("Too many missing indices".into());
+                return Err(format!(
+                    "Too many missing indices: {:?}",
+                    missing_indices
+                )
+                .into());
             }
         }
         info!("code shreds len: {}", code_shreds.len());
@@ -226,6 +251,7 @@ pub fn get_shred_index(
     Ok(u32::from_le_bytes(raw_shred[0x49..0x49 + 4].try_into()?))
 }
 
+/// get_shred_is_last works for data shreds only
 pub fn get_shred_is_last(
     raw_shred: &[u8],
 ) -> Result<bool, Box<dyn std::error::Error>> {
@@ -244,6 +270,20 @@ pub fn get_shred_is_last(
     }
 }
 
+pub fn get_shred_data_flags(raw_shred: &[u8]) -> (bool, bool, u8) {
+    let flags = raw_shred[0x55];
+    // Extract block_complete (bit 7)
+    let block_complete = (flags & 0b1000_0000) != 0;
+
+    // Extract batch_complete (bit 6)
+    let batch_complete = (flags & 0b0100_0000) != 0;
+
+    // Extract batch_tick (bits 0-5)
+    let batch_tick = flags & 0b0011_1111;
+
+    (block_complete, batch_complete, batch_tick)
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -260,19 +300,32 @@ mod tests {
             serde_json::from_str(&data).expect("Failed to parse JSON");
 
         // debugging, useful
-        // {
-        //     let shreds = raw_shreds.iter().map(|shred| {
-        //         deserialize_shred(shred.clone()).expect("shred")
-        //     });
-        //     for shred in shreds.take(1000) {
-        //         info!(
-        //             "{} shred: {} {}",
-        //             shred.slot(),
-        //             shred.index(),
-        //             shred.data_complete()
-        //         );
-        //     }
-        // }
+        {
+            let shreds = raw_shreds
+                .iter()
+                .filter(|shred| shred.len() > 29)
+                .map(|shred| deserialize_shred(shred.clone()).expect("shred"))
+                .collect::<Vec<_>>();
+            let mut shreds_by_slot = HashMap::new();
+            for shred in shreds.iter() {
+                shreds_by_slot
+                    .entry(shred.slot())
+                    .or_insert_with(Vec::new)
+                    .push(shred.clone());
+            }
+            for (_, mut shreds) in shreds_by_slot {
+                shreds = shreds
+                    .iter()
+                    .filter(|shred| shred.is_data())
+                    .cloned()
+                    .collect::<Vec<_>>();
+                shreds.sort_by_key(|shred| shred.index());
+                shreds.dedup_by_key(|shred| shred.index());
+                for shred in shreds {
+                    debug!("{}", get_shred_debug_string(shred));
+                }
+            }
+        }
 
         // Group shreds by slot
         let shreds_by_slot = load_shreds(raw_shreds);
