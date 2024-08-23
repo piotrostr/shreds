@@ -1,6 +1,7 @@
 use log::{debug, error, info};
 use solana_entry::entry::Entry;
 use std::collections::{HashMap, HashSet};
+use tokio::sync::mpsc;
 
 use solana_ledger::shred::{layout, Shred, ShredId};
 use solana_sdk::clock::Slot;
@@ -20,19 +21,26 @@ struct BatchInfo {
     is_last_shred: bool,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Processor {
     data_shreds: HashMap<Slot, HashMap<u8, BatchInfo>>,
     uniqueness: HashSet<ShredId>,
     handles: Vec<tokio::task::JoinHandle<()>>,
+    entry_sender: mpsc::Sender<Vec<Entry>>,
+    error_sender: mpsc::Sender<String>,
 }
 
 impl Processor {
-    pub fn new() -> Self {
+    pub fn new(
+        entry_sender: mpsc::Sender<Vec<Entry>>,
+        error_sender: mpsc::Sender<String>,
+    ) -> Self {
         Processor {
             data_shreds: HashMap::new(),
             uniqueness: HashSet::new(),
             handles: Vec::new(),
+            entry_sender,
+            error_sender,
         }
     }
 
@@ -79,35 +87,30 @@ impl Processor {
                 if batch_info.is_last_shred && is_batch_ready(batch_info) {
                     debug!("Sending Slot {} Batch {}", slot, batch_tick);
                     let batch_shreds = std::mem::take(&mut batch_info.shreds);
-                    // let transactions = self.transactions.clone();
-                    let handle = tokio::spawn({
-                        async move {
-                            let entries = handle_batch(
-                                batch_shreds.into_values().collect(),
-                            )
-                            .await;
-                            if let Ok(entries) = entries {
-                                let new_transactions = entries
-                                    .iter()
-                                    .flat_map(|entry| {
-                                        entry.transactions.clone()
-                                    })
-                                    .collect::<Vec<_>>();
-                                info!(
-                                    "Batch {}-{} has {} txs",
-                                    slot,
-                                    batch_tick,
-                                    new_transactions.len(),
-                                );
-                                debug!(
-                                    "Transactions: {:#?}",
-                                    new_transactions
-                                        .iter()
-                                        .flat_map(|t| t.signatures.clone())
-                                        .collect::<Vec<_>>()
-                                );
-                                drop(entries);
-                                drop(new_transactions);
+                    let entry_sender = self.entry_sender.clone();
+                    let error_sender = self.error_sender.clone();
+                    let handle = tokio::spawn(async move {
+                        let raw_shreds =
+                            batch_shreds.into_values().collect::<Vec<_>>();
+                        let total = raw_shreds.len();
+                        match handle_batch(raw_shreds).await {
+                            Ok(entries) => {
+                                if let Err(e) =
+                                    entry_sender.send(entries).await
+                                {
+                                    error!("Failed to send entries: {:?}", e);
+                                }
+                            }
+                            Err(e) => {
+                                if let Err(e) = error_sender
+                                    .send(format!(
+                                        "{}-{} total: {} {:?}",
+                                        slot, total, batch_tick, e
+                                    ))
+                                    .await
+                                {
+                                    error!("Failed to send error: {:?}", e);
+                                }
                             }
                         }
                     });
@@ -158,10 +161,9 @@ fn is_batch_ready(batch_info: &BatchInfo) -> bool {
     batch_info.shreds.len() as u32 == expected_count
 }
 
-#[timed::timed(duration(printer = "info!"))]
 pub async fn handle_batch(
     raw_shreds: Vec<Vec<u8>>,
-) -> Result<Vec<Entry>, Box<dyn std::error::Error>> {
+) -> Result<Vec<Entry>, Box<dyn std::error::Error + Send + Sync>> {
     debug!("Processing batch with {} shreds", raw_shreds.len());
 
     let mut shreds = raw_shreds
@@ -186,14 +188,7 @@ pub async fn handle_batch(
             debug!("Successfully deserialized {} entries", entries.len());
             Ok(entries)
         }
-        Err(e) => {
-            // let debug_shreds = shreds
-            //     .iter()
-            //     .map(|s| get_shred_debug_string(s.clone()))
-            //     .collect::<Vec<_>>();
-            error!("Failed to deserialize entries: {:?}", e);
-            Err(e)
-        }
+        Err(e) => Err(e),
     }
 }
 
@@ -204,22 +199,42 @@ mod tests {
 
     #[tokio::test]
     async fn processor_works() {
-        std::env::set_var("RUST_LOG", "info");
-        env_logger::init();
+        env_logger::Builder::default()
+            .format_module_path(false)
+            .filter_level(log::LevelFilter::Info)
+            .init();
 
         let data = std::fs::read_to_string("packets.json")
             .expect("Failed to read packets.json");
         let raw_shreds: Vec<Vec<u8>> =
             serde_json::from_str(&data).expect("Failed to parse JSON");
 
-        let mut processor = Processor::new();
-        for chunk in raw_shreds.chunks(100) {
-            for raw_shred in chunk {
-                processor.collect(raw_shred.to_vec()).await;
+        let (entry_sender, mut entry_receiver) = mpsc::channel(2000);
+        let (error_sender, mut error_receiver) = mpsc::channel(2000);
+
+        let mut processor = Processor::new(entry_sender, error_sender);
+        for raw_shred in raw_shreds {
+            processor.collect(raw_shred).await;
+        }
+
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    Some(entry) = entry_receiver.recv() => {
+                        info!("OK: entries {} txs: {}",
+                            entry.len(),
+                            entry.iter().map(|e| e.transactions.len()).sum::<usize>(),
+                        );
+                    }
+                    Some(error) = error_receiver.recv() => {
+                        error!("{}", error);
+                    }
+                }
             }
-            for handle in processor.handles.drain(..) {
-                handle.await.expect("Failed to process batch");
-            }
+        });
+
+        for handle in processor.handles.drain(..) {
+            handle.await.expect("Failed to process batch");
         }
     }
 }

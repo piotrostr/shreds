@@ -51,7 +51,7 @@ pub fn deserialize_shred(data: Vec<u8>) -> Result<Shred, Error> {
 
 pub fn deserialize_entries(
     payload: &[u8],
-) -> Result<Vec<Entry>, Box<dyn std::error::Error>> {
+) -> Result<Vec<Entry>, Box<dyn std::error::Error + Send + Sync>> {
     if payload.len() < 8 {
         error!("Payload too short: {} bytes", payload.len());
         return Ok(Vec::new());
@@ -60,8 +60,8 @@ pub fn deserialize_entries(
     let entry_count = u64::from_le_bytes(
         payload[0..8].try_into().expect("entry count parse"),
     );
-    if entry_count > 100_000 {
-        return Err(format!("Entry count too large: {}", entry_count).into());
+    if entry_count > 10_000 {
+        return Err(format!("entry count: {}", entry_count).into());
     }
     debug!("Entry count prefix: {}", entry_count);
     debug!("First 16 bytes of payload: {:?}", &payload[..16]);
@@ -291,8 +291,10 @@ mod tests {
 
     #[test]
     fn deserialize_shreds() {
-        std::env::set_var("RUST_LOG", "info");
-        env_logger::init();
+        env_logger::Builder::default()
+            .format_module_path(false)
+            .filter_level(log::LevelFilter::Info)
+            .init();
 
         let data = std::fs::read_to_string("packets.json")
             .expect("Failed to read packets.json");

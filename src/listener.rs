@@ -47,7 +47,9 @@ pub async fn run_listener_with_processor(
             .await
             .expect("Couldn't bind to address"),
     );
-    let mut processor = Processor::new();
+    let (entry_sender, mut entry_receiver) = tokio::sync::mpsc::channel(2000);
+    let (error_sender, mut error_receiver) = tokio::sync::mpsc::channel(2000);
+    let mut processor = Processor::new(entry_sender, error_sender);
 
     let mut buf = [0u8; PACKET_SIZE]; // max shred size
     tokio::spawn(async move {
@@ -59,6 +61,22 @@ pub async fn run_listener_with_processor(
                 }
                 Err(e) => {
                     error!("Error receiving packet: {:?}", e);
+                }
+            }
+        }
+    });
+
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                Some(entry) = entry_receiver.recv() => {
+                    info!("OK: entries {} txs: {}",
+                        entry.len(),
+                        entry.iter().map(|e| e.transactions.len()).sum::<usize>(),
+                    );
+                }
+                Some(error) = error_receiver.recv() => {
+                    error!("{}", error);
                 }
             }
         }
