@@ -6,7 +6,6 @@
 //    option)
 use futures_util::future::join_all;
 use once_cell::sync::Lazy;
-use raydium_amm::math::{Calculator, CheckedCeilDiv, SwapDirection, U128};
 use serde_json::Value;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::signature::Keypair;
@@ -24,8 +23,11 @@ use solana_sdk::pubkey::Pubkey;
 use solana_sdk::transaction::VersionedTransaction;
 use tokio::sync::mpsc;
 
-use crate::raydium::{self, ParsedAmmInstruction};
-use raydium_library::amm::{self, openbook, AmmKeys, CalculateResult};
+use crate::raydium::{
+    self, calculate_price, swap_exact_amount, ParsedAmmInstruction,
+    RaydiumAmmPool,
+};
+use raydium_library::amm::{self, openbook};
 
 pub const WHIRLPOOL: &str = "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc";
 pub const RAYDIUM_CP: &str = "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C";
@@ -48,25 +50,6 @@ pub struct PoolsState {
 
 #[derive(Debug, Default)]
 pub struct OrcaPool {}
-
-// TODO there might be sol-token or token-sol both versions, gotta be able to handle both
-#[derive(Debug, Clone)]
-pub struct RaydiumAmmPool {
-    pub token: Pubkey,
-    pub amm_keys: AmmKeys,
-    pub state: CalculateResult,
-}
-
-pub fn calculate_price(state: &CalculateResult) -> u64 {
-    let pc_amount = state.pool_pc_vault_amount;
-    let coin_amount = state.pool_coin_vault_amount;
-
-    if coin_amount == 0 {
-        return 0; // Avoid division by zero
-    }
-
-    pc_amount / coin_amount
-}
 
 impl PoolsState {
     pub fn reduce_orca_tx(&mut self, _tx: VersionedTransaction) {
@@ -153,9 +136,6 @@ impl PoolsState {
             }
         }
     }
-
-    // this might work but also might not work
-    // code is from raydium
     async fn update_pool_state_swap(
         &mut self,
         amm_id: &Pubkey,
@@ -167,34 +147,26 @@ impl PoolsState {
     ) {
         if let Some(pool) = self.raydium_pools.get(amm_id) {
             let mut pool = pool.write().await;
-            // double check here
             let is_coin_to_pc = pool.amm_keys.amm_coin_vault
                 == *pool_coin_vault
                 && pool.amm_keys.amm_pc_vault == *pool_pc_vault;
 
             let swap_direction = if is_coin_to_pc {
-                SwapDirection::Coin2PC
+                raydium_amm::math::SwapDirection::Coin2PC
             } else {
-                SwapDirection::PC2Coin
+                raydium_amm::math::SwapDirection::PC2Coin
             };
 
             let (pc_amount, coin_amount) = if is_swap_base_in {
-                let swap_fee = U128::from(amount_specified)
-                    .checked_mul(pool.state.swap_fee_numerator.into())
-                    .unwrap()
-                    .checked_ceil_div(pool.state.swap_fee_denominator.into())
-                    .unwrap()
-                    .0;
-                let swap_in_after_deduct_fee = U128::from(amount_specified)
-                    .checked_sub(swap_fee)
-                    .unwrap();
-                let swap_amount_out = Calculator::swap_token_amount_base_in(
-                    swap_in_after_deduct_fee,
-                    pool.state.pool_pc_vault_amount.into(),
-                    pool.state.pool_coin_vault_amount.into(),
+                let swap_amount_out = swap_exact_amount(
+                    pool.state.pool_pc_vault_amount,
+                    pool.state.pool_coin_vault_amount,
+                    pool.state.swap_fee_numerator,
+                    pool.state.swap_fee_denominator,
                     swap_direction,
-                )
-                .as_u64();
+                    amount_specified,
+                    true,
+                );
 
                 if is_coin_to_pc {
                     (
@@ -216,27 +188,15 @@ impl PoolsState {
                     )
                 }
             } else {
-                let swap_in_before_add_fee =
-                    Calculator::swap_token_amount_base_out(
-                        other_amount_threshold.into(),
-                        pool.state.pool_pc_vault_amount.into(),
-                        pool.state.pool_coin_vault_amount.into(),
-                        swap_direction,
-                    );
-                let swap_in_after_add_fee = swap_in_before_add_fee
-                    .checked_mul(pool.state.swap_fee_denominator.into())
-                    .unwrap()
-                    .checked_ceil_div(
-                        (pool
-                            .state
-                            .swap_fee_denominator
-                            .checked_sub(pool.state.swap_fee_numerator)
-                            .unwrap())
-                        .into(),
-                    )
-                    .unwrap()
-                    .0
-                    .as_u64();
+                let swap_amount_in = swap_exact_amount(
+                    pool.state.pool_pc_vault_amount,
+                    pool.state.pool_coin_vault_amount,
+                    pool.state.swap_fee_numerator,
+                    pool.state.swap_fee_denominator,
+                    swap_direction,
+                    other_amount_threshold,
+                    false,
+                );
 
                 if is_coin_to_pc {
                     (
@@ -245,13 +205,13 @@ impl PoolsState {
                             .saturating_add(other_amount_threshold),
                         pool.state
                             .pool_coin_vault_amount
-                            .saturating_sub(swap_in_after_add_fee),
+                            .saturating_sub(swap_amount_in),
                     )
                 } else {
                     (
                         pool.state
                             .pool_pc_vault_amount
-                            .saturating_sub(swap_in_after_add_fee),
+                            .saturating_sub(swap_amount_in),
                         pool.state
                             .pool_coin_vault_amount
                             .saturating_add(other_amount_threshold),
@@ -259,13 +219,13 @@ impl PoolsState {
                 }
             };
 
-            let initial_price = calculate_price(&pool.state);
+            let initial_price = calculate_price(&pool.state, &pool.decimals);
 
             // Update pool amounts
             pool.state.pool_pc_vault_amount = pc_amount;
             pool.state.pool_coin_vault_amount = coin_amount;
 
-            let new_price = calculate_price(&pool.state);
+            let new_price = calculate_price(&pool.state, &pool.decimals);
 
             info!(
                 "{}",
@@ -277,14 +237,12 @@ impl PoolsState {
                     "pc_mint": pool.amm_keys.amm_pc_mint.to_string(),
                     "amount_specified": amount_specified,
                     "coin_mint": pool.amm_keys.amm_coin_mint.to_string(),
-                    "other_amount_threshold": other_amount_threshold.to_string(),
+                    "other_amount_threshold": other_amount_threshold,
                     "initial_price": initial_price,
                     "new_price": new_price,
                 }))
                 .unwrap()
             );
-        } else {
-            debug!("Pool not found for AMM ID: {}", amm_id);
         }
     }
 
@@ -378,7 +336,7 @@ pub async fn initialize_raydium_amm_pools(
         async move {
             let amm_keys_vec = amm_keys_map.get(mint).unwrap(); // bound to exist
             let mut results = Vec::new();
-            for amm_keys in amm_keys_vec.iter() {
+            for (amm_keys, decimals) in amm_keys_vec.iter() {
                 info!("Loading AMM keys for pool: {:?}", amm_keys.amm_pool);
                 let market_keys = openbook::get_keys_for_market(
                     rpc_client,
@@ -397,7 +355,7 @@ pub async fn initialize_raydium_amm_pools(
                 )
                 .await
                 .expect("calculate pool vault amounts");
-                results.push((*mint, *amm_keys, state));
+                results.push((*mint, *amm_keys, state, *decimals));
             }
             results
         }
@@ -408,13 +366,14 @@ pub async fn initialize_raydium_amm_pools(
 
     // Update pools_state
     for results in all_results {
-        for (mint, amm_keys, state) in results {
+        for (mint, amm_keys, state, decimals) in results {
             pools_state.raydium_pools.insert(
                 amm_keys.amm_pool,
                 Arc::new(RwLock::new(RaydiumAmmPool {
                     token: mint,
                     amm_keys,
                     state,
+                    decimals,
                 })),
             );
             pools_state

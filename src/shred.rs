@@ -3,7 +3,7 @@ use solana_ledger::shred::{ReedSolomonCache, ShredFlags, Shredder};
 use std::collections::{HashMap, HashSet};
 
 use crate::structs::ShredVariant;
-use log::{debug, error, info, trace, warn};
+use log::{error, info, trace, warn};
 use solana_entry::entry::Entry;
 use solana_ledger::shred::{Error, Shred};
 use solana_sdk::signature::SIGNATURE_BYTES;
@@ -288,6 +288,7 @@ pub fn get_shred_data_flags(raw_shred: &[u8]) -> (bool, bool, u8) {
 mod tests {
 
     use super::*;
+    use log::debug;
 
     #[test]
     fn deserialize_shreds() {

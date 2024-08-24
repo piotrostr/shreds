@@ -1,7 +1,8 @@
 use futures_util::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use log::{info, warn};
-use raydium_library::amm::AmmKeys;
+use raydium_amm::math::{CheckedCeilDiv, SwapDirection, U128};
+use raydium_library::amm::{AmmKeys, CalculateResult};
 use reqwest::Client;
 use serde_json::Value;
 use solana_sdk::pubkey::Pubkey;
@@ -20,6 +21,44 @@ use raydium_amm::instruction::{
     WithdrawSrmInstruction,
 };
 use solana_program::program_error::ProgramError;
+
+#[derive(Debug, Clone, Copy)]
+pub struct RaydiumDecimals {
+    pub coin_decimals: u8,
+    pub pc_decimals: u8,
+    pub lp_decimals: u8,
+}
+
+// TODO there might be sol-token or token-sol both versions, gotta be able to handle both
+#[derive(Debug, Clone)]
+pub struct RaydiumAmmPool {
+    pub token: Pubkey,
+    pub amm_keys: AmmKeys,
+    pub state: CalculateResult,
+    pub decimals: RaydiumDecimals,
+}
+
+pub fn calculate_price(
+    state: &CalculateResult,
+    decimals: &RaydiumDecimals,
+) -> u64 {
+    let pc_amount = state.pool_pc_vault_amount;
+    let coin_amount = state.pool_coin_vault_amount;
+
+    if coin_amount == 0 {
+        panic!("Coin amount is 0");
+    }
+
+    // Adjust for decimals
+    let pc_decimals = 10u64.pow(decimals.pc_decimals as u32);
+    let coin_decimals = 10u64.pow(decimals.coin_decimals as u32);
+
+    let adjusted_pc_amount = pc_amount / pc_decimals;
+    let adjusted_coin_amount = coin_amount / coin_decimals;
+
+    // Calculate price
+    adjusted_pc_amount / adjusted_coin_amount
+}
 
 #[derive(Debug)]
 pub enum ParsedAmmInstruction {
@@ -147,13 +186,15 @@ pub async fn download_raydium_json(
     Ok(())
 }
 
+type Amm = (AmmKeys, RaydiumDecimals);
+
 // this takes long, possibly could make it so that it uses a search index it
 // returns all of the
 // pools for a given token, to be filtered later for relevant
 pub fn parse_raydium_json(
     raydium_json: Arc<Value>,
     mints_of_interest: Vec<Pubkey>,
-) -> Result<HashMap<Pubkey, Vec<AmmKeys>>, Box<dyn std::error::Error>> {
+) -> Result<HashMap<Pubkey, Vec<Amm>>, Box<dyn std::error::Error>> {
     let mut result = HashMap::new();
     info!("Parsing relevant pools");
 
@@ -172,10 +213,10 @@ pub fn parse_raydium_json(
         let quote_mint =
             Pubkey::from_str(json["quoteMint"].as_str().unwrap()).unwrap();
         if mints_of_interest.contains(&base_mint) {
-            let amm_keys = json_to_amm_keys(json);
+            let amm_keys = json_to_amm(json);
             result.entry(base_mint).or_insert(vec![]).push(amm_keys);
         } else if mints_of_interest.contains(&quote_mint) {
-            let amm_keys = json_to_amm_keys(json);
+            let amm_keys = json_to_amm(json);
             result.entry(quote_mint).or_insert(vec![]).push(amm_keys);
         }
 
@@ -190,32 +231,108 @@ pub fn parse_raydium_json(
     Ok(result)
 }
 
-pub fn json_to_amm_keys(json: &Value) -> AmmKeys {
-    AmmKeys {
-        amm_pool: Pubkey::from_str(json["id"].as_str().unwrap()).unwrap(),
-        amm_coin_mint: Pubkey::from_str(json["baseMint"].as_str().unwrap())
+pub fn json_to_amm(json: &Value) -> (AmmKeys, RaydiumDecimals) {
+    (
+        AmmKeys {
+            amm_pool: Pubkey::from_str(json["id"].as_str().unwrap()).unwrap(),
+            amm_coin_mint: Pubkey::from_str(
+                json["baseMint"].as_str().unwrap(),
+            )
             .unwrap(),
-        amm_pc_mint: Pubkey::from_str(json["quoteMint"].as_str().unwrap())
+            amm_pc_mint: Pubkey::from_str(
+                json["quoteMint"].as_str().unwrap(),
+            )
             .unwrap(),
-        amm_authority: Pubkey::from_str(json["authority"].as_str().unwrap())
+            amm_authority: Pubkey::from_str(
+                json["authority"].as_str().unwrap(),
+            )
             .unwrap(),
-        amm_target: Pubkey::from_str(json["targetOrders"].as_str().unwrap())
+            amm_target: Pubkey::from_str(
+                json["targetOrders"].as_str().unwrap(),
+            )
             .unwrap(),
-        amm_coin_vault: Pubkey::from_str(json["baseVault"].as_str().unwrap())
+            amm_coin_vault: Pubkey::from_str(
+                json["baseVault"].as_str().unwrap(),
+            )
             .unwrap(),
-        amm_pc_vault: Pubkey::from_str(json["quoteVault"].as_str().unwrap())
+            amm_pc_vault: Pubkey::from_str(
+                json["quoteVault"].as_str().unwrap(),
+            )
             .unwrap(),
-        amm_lp_mint: Pubkey::from_str(json["lpMint"].as_str().unwrap())
+            amm_lp_mint: Pubkey::from_str(json["lpMint"].as_str().unwrap())
+                .unwrap(),
+            amm_open_order: Pubkey::from_str(
+                json["openOrders"].as_str().unwrap(),
+            )
             .unwrap(),
-        amm_open_order: Pubkey::from_str(
-            json["openOrders"].as_str().unwrap(),
+            market_program: Pubkey::from_str(
+                json["marketProgramId"].as_str().unwrap(),
+            )
+            .unwrap(),
+            market: Pubkey::from_str(json["marketId"].as_str().unwrap())
+                .unwrap(),
+            nonce: u8::default(), // not relevant
+        },
+        RaydiumDecimals {
+            coin_decimals: json["baseDecimals"].as_u64().unwrap() as u8,
+            pc_decimals: json["quoteDecimals"].as_u64().unwrap() as u8,
+            lp_decimals: json["lpDecimals"].as_u64().unwrap() as u8,
+        },
+    )
+}
+
+pub fn swap_exact_amount(
+    pc_vault_amount: u64,
+    coin_vault_amount: u64,
+    swap_fee_numerator: u64,
+    swap_fee_denominator: u64,
+    swap_direction: SwapDirection,
+    amount_specified: u64,
+    swap_base_in: bool,
+) -> u64 {
+    if swap_base_in {
+        let swap_fee = U128::from(amount_specified)
+            .checked_mul(swap_fee_numerator.into())
+            .unwrap()
+            .checked_ceil_div(swap_fee_denominator.into())
+            .unwrap()
+            .0;
+        let swap_in_after_deduct_fee =
+            U128::from(amount_specified).checked_sub(swap_fee).unwrap();
+        raydium_amm::math::Calculator::swap_token_amount_base_in(
+            swap_in_after_deduct_fee,
+            pc_vault_amount.into(),
+            coin_vault_amount.into(),
+            swap_direction,
         )
-        .unwrap(),
-        market_program: Pubkey::from_str(
-            json["marketProgramId"].as_str().unwrap(),
-        )
-        .unwrap(),
-        market: Pubkey::from_str(json["marketId"].as_str().unwrap()).unwrap(),
-        nonce: u8::default(), // not relevant
+        .as_u64()
+    } else {
+        let swap_in_before_add_fee =
+            raydium_amm::math::Calculator::swap_token_amount_base_out(
+                amount_specified.into(),
+                pc_vault_amount.into(),
+                coin_vault_amount.into(),
+                swap_direction,
+            );
+        swap_in_before_add_fee
+            .checked_mul(swap_fee_denominator.into())
+            .unwrap()
+            .checked_ceil_div(
+                (swap_fee_denominator
+                    .checked_sub(swap_fee_numerator)
+                    .unwrap())
+                .into(),
+            )
+            .unwrap()
+            .0
+            .as_u64()
     }
+}
+
+pub fn unpack<T>(data: &[u8]) -> Option<T>
+where
+    T: Clone,
+{
+    let ret = unsafe { &*(&data[0] as *const u8 as *const T) };
+    Some(ret.clone())
 }
