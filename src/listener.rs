@@ -84,6 +84,7 @@ pub async fn run_listener_with_algo(
             while let Some(sig) = sig_receiver.recv().await {
                 let mut sigs = sigs.write().await;
                 let timestamp = chrono::Utc::now().timestamp();
+                info!("algo: {:?}", sig);
                 sigs.push((timestamp as u64, sig.clone()));
             }
         }

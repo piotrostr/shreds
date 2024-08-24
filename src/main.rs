@@ -61,8 +61,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .await
                 .expect("shreds")
         });
+
+        info!("Waiting for 20 seconds");
+        tokio::time::sleep(tokio::time::Duration::from_secs(20)).await;
+
         let (bench_sigs, shreds_sigs) =
             tokio::try_join!(pubsub_handle, shreds_handle)?;
+
         let mut miss_count = 0;
         let mut slower_count = 0;
         let mut faster_count = 0;

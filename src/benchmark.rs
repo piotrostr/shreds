@@ -24,7 +24,7 @@ pub async fn listen_pubsub(
     let mut sigs = Vec::new();
     while let Some(data) = stream.next().await {
         let timestamp = chrono::Utc::now().timestamp();
-        info!("{:?}", data.value.signature);
+        info!("pubsub: {:?}", data.value.signature);
         sigs.push((timestamp as u64, data.value.signature));
     }
 
