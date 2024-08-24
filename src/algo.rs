@@ -4,11 +4,15 @@
 // 3) implement calculate amount out for a given amount for both pools for profit search
 // 4) take volume into account when calculating profit and best size (flash loans might be an
 //    option)
+//  * there might be missing data, there has to be a constant stream for resolving
+//  * the pool calculation has to involve the slippage and the exact amount that someone is to
+//  receive, it should amount to the right amount per slot since the transactions are in the
+//  ordering as accepted per validator, so just by calculating the price it should work
 use futures_util::future::join_all;
 use once_cell::sync::Lazy;
 use serde_json::Value;
 use solana_client::nonblocking::rpc_client::RpcClient;
-use solana_sdk::signature::Keypair;
+use solana_sdk::signature::{Keypair, Signature};
 use solana_sdk::signer::{EncodableKey, Signer};
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -24,8 +28,8 @@ use solana_sdk::transaction::VersionedTransaction;
 use tokio::sync::mpsc;
 
 use crate::raydium::{
-    self, calculate_price, swap_exact_amount, ParsedAmmInstruction,
-    RaydiumAmmPool,
+    self, calculate_price, swap_exact_amount, ParsedAccounts,
+    ParsedAmmInstruction, RaydiumAmmPool,
 };
 use raydium_library::amm::{self, openbook};
 
@@ -75,6 +79,7 @@ impl PoolsState {
                             parsed_instruction,
                             instruction,
                             &tx.message,
+                            &tx.signatures[0],
                         )
                         .await;
                     }
@@ -95,6 +100,7 @@ impl PoolsState {
         parsed_instruction: ParsedAmmInstruction,
         instruction: &CompiledInstruction,
         message: &VersionedMessage,
+        signature: &Signature,
     ) {
         let amm_id_index = 1; // Amm account index
         let pool_coin_token_account_index = 5; // Pool Coin Token Account index
@@ -126,23 +132,29 @@ impl PoolsState {
         match parsed_instruction {
             ParsedAmmInstruction::SwapBaseOut(swap_instruction) => {
                 self.update_pool_state_swap(
-                    &amm_id,
-                    &pool_coin_vault,
-                    &pool_pc_vault,
+                    ParsedAccounts {
+                        amm_id,
+                        pool_coin_vault,
+                        pool_pc_vault,
+                    },
                     swap_instruction.max_amount_in,
                     swap_instruction.amount_out,
                     false,
+                    signature,
                 )
                 .await;
             }
             ParsedAmmInstruction::SwapBaseIn(swap_instruction) => {
                 self.update_pool_state_swap(
-                    &amm_id,
-                    &pool_coin_vault,
-                    &pool_pc_vault,
+                    ParsedAccounts {
+                        amm_id,
+                        pool_coin_vault,
+                        pool_pc_vault,
+                    },
                     swap_instruction.amount_in,
                     swap_instruction.minimum_amount_out,
                     true,
+                    signature,
                 )
                 .await;
             }
@@ -154,18 +166,18 @@ impl PoolsState {
     }
     async fn update_pool_state_swap(
         &mut self,
-        amm_id: &Pubkey,
-        pool_coin_vault: &Pubkey,
-        pool_pc_vault: &Pubkey,
+        parsed_accounts: ParsedAccounts,
         amount_specified: u64,
         other_amount_threshold: u64,
         is_swap_base_in: bool,
+        signature: &Signature,
     ) {
-        if let Some(pool) = self.raydium_pools.get(amm_id) {
+        if let Some(pool) = self.raydium_pools.get(&parsed_accounts.amm_id) {
             let mut pool = pool.write().await;
             let is_coin_to_pc = pool.amm_keys.amm_coin_vault
-                == *pool_coin_vault
-                && pool.amm_keys.amm_pc_vault == *pool_pc_vault;
+                == parsed_accounts.pool_coin_vault
+                && pool.amm_keys.amm_pc_vault
+                    == parsed_accounts.pool_pc_vault;
 
             let swap_direction = if is_coin_to_pc {
                 raydium_amm::math::SwapDirection::Coin2PC
@@ -247,9 +259,10 @@ impl PoolsState {
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "event": "Swap",
+                    "signature": signature.to_string(),
                     "swap_direction": format!("{:?}", swap_direction),
                     "is_swap_base_in": is_swap_base_in,
-                    "amm_id": amm_id.to_string(),
+                    "amm_id": parsed_accounts.amm_id.to_string(),
                     "pc_mint": pool.amm_keys.amm_pc_mint.to_string(),
                     "amount_specified": amount_specified,
                     "coin_mint": pool.amm_keys.amm_coin_mint.to_string(),

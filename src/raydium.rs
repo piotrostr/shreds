@@ -22,6 +22,12 @@ use raydium_amm::instruction::{
 };
 use solana_program::program_error::ProgramError;
 
+pub struct ParsedAccounts {
+    pub amm_id: Pubkey,
+    pub pool_coin_vault: Pubkey,
+    pub pool_pc_vault: Pubkey,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct RaydiumDecimals {
     pub coin_decimals: u8,
