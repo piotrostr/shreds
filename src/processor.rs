@@ -204,6 +204,8 @@ pub async fn handle_batch(
 #[cfg(test)]
 mod tests {
 
+    use log::info;
+
     use super::*;
     use crate::algo;
 
@@ -226,7 +228,10 @@ mod tests {
 
         tokio::spawn(async move {
             // gotta clean up the channel, more than 2k txs drop
-            while sig_receiver.recv().await.is_some() {}
+            while let Some(sig) = sig_receiver.recv().await {
+                let timestamp = chrono::Utc::now().timestamp();
+                info!("shreds: {} {}", timestamp, sig);
+            }
         });
 
         let mut processor = Processor::new(entry_sender, error_sender);
