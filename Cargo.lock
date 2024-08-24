@@ -4767,6 +4767,7 @@ dependencies = [
  "anchor-lang",
  "anyhow",
  "bincode",
+ "chrono",
  "clap 4.5.16",
  "dotenv",
  "env_logger 0.11.5",

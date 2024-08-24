@@ -3,7 +3,7 @@ use solana_ledger::shred::{ReedSolomonCache, ShredFlags, Shredder};
 use std::collections::{HashMap, HashSet};
 
 use crate::structs::ShredVariant;
-use log::{error, info, trace, warn};
+use log::{debug, error, info, trace, warn};
 use solana_entry::entry::Entry;
 use solana_ledger::shred::{Error, Shred};
 use solana_sdk::signature::SIGNATURE_BYTES;

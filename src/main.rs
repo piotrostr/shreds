@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use clap::{command, Parser};
 use log::info;
 use shreds::algo::RAYDIUM_AMM;
@@ -25,7 +27,7 @@ struct Cli {
     download: bool,
 
     #[arg(long)]
-    pubsub: bool,
+    benchmark: bool,
 }
 
 #[tokio::main]
@@ -47,8 +49,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    if cli.pubsub {
-        benchmark::listen_pubsub(vec![RAYDIUM_AMM.to_string()]).await?;
+    if cli.benchmark {
+        let bench_sigs =
+            benchmark::listen_pubsub(vec![RAYDIUM_AMM.to_string()]).await?;
+        let shreds_sigs = listener::run_listener_with_algo(&cli.bind).await?;
+        let mut miss_count = 0;
+        let mut slower_count = 0;
+        let mut faster_count = 0;
+        let mut shreds_sigs_timestamps = HashMap::new();
+        for (timestamp, sig) in shreds_sigs.iter() {
+            shreds_sigs_timestamps.insert(sig, timestamp);
+        }
+        for (timestamp, sig) in bench_sigs.iter() {
+            if let Some(shreds_timestamp) = shreds_sigs_timestamps.get(sig) {
+                match shreds_timestamp.cmp(&timestamp) {
+                    std::cmp::Ordering::Equal => {}
+                    std::cmp::Ordering::Less => {
+                        slower_count += 1;
+                    }
+                    std::cmp::Ordering::Greater => {
+                        faster_count += 1;
+                    }
+                }
+            } else {
+                miss_count += 1;
+            }
+        }
+
+        info!("Benchmark sigs: {}", bench_sigs.len());
+        info!("Shreds sigs: {}", shreds_sigs.len());
+        info!("Miss count: {}", miss_count);
+        info!("Slower count: {}", slower_count);
+        info!("Faster count: {}", faster_count);
+
         return Ok(());
     }
 

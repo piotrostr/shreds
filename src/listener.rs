@@ -3,7 +3,7 @@ use std::io::Write;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::signal;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 use tokio::time::{sleep, Duration};
 
 use crate::algo;
@@ -42,7 +42,7 @@ pub async fn dump_to_file(received_packets: Arc<Mutex<Vec<Vec<u8>>>>) {
 
 pub async fn run_listener_with_algo(
     bind_addr: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<Vec<(u64, String)>, Box<dyn std::error::Error>> {
     let socket = Arc::new(
         UdpSocket::bind(bind_addr)
             .await
@@ -50,6 +50,7 @@ pub async fn run_listener_with_algo(
     );
     let (entry_sender, entry_receiver) = tokio::sync::mpsc::channel(2000);
     let (error_sender, error_receiver) = tokio::sync::mpsc::channel(2000);
+    let (sig_sender, mut sig_receiver) = tokio::sync::mpsc::channel(2000);
     let mut processor = Processor::new(entry_sender, error_sender);
 
     let mut buf = [0u8; PACKET_SIZE]; // max shred size
@@ -67,10 +68,30 @@ pub async fn run_listener_with_algo(
         }
     });
 
-    algo::receive_entries(entry_receiver, error_receiver).await;
+    tokio::spawn(async move {
+        algo::receive_entries(
+            entry_receiver,
+            error_receiver,
+            Arc::new(sig_sender),
+        )
+        .await;
+    });
+
+    let sigs = Arc::new(RwLock::new(Vec::new()));
+    tokio::spawn({
+        let sigs = sigs.clone();
+        async move {
+            while let Some(sig) = sig_receiver.recv().await {
+                let mut sigs = sigs.write().await;
+                let timestamp = chrono::Utc::now().timestamp();
+                sigs.push((timestamp as u64, sig.clone()));
+            }
+        }
+    });
+
     signal::ctrl_c().await.expect("Failed to listen for Ctrl+C");
 
-    Ok(())
+    Ok(sigs.clone().read().await.clone())
 }
 
 pub async fn run_listener_with_save(
@@ -108,4 +129,3 @@ pub async fn run_listener_with_save(
 
     Ok(())
 }
-

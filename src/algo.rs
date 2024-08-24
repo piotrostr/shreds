@@ -48,6 +48,7 @@ pub struct PoolsState {
     // mint to program_id vec
     pub raydium_pools_by_mint: HashMap<Pubkey, Vec<Pubkey>>,
     pub raydium_pool_ids: Vec<Pubkey>,
+    pub signatures: Vec<Signature>,
 }
 
 #[derive(Debug, Default)]
@@ -284,6 +285,7 @@ impl PoolsState {
 pub async fn receive_entries(
     mut entry_receiver: mpsc::Receiver<Vec<Entry>>,
     mut error_receiver: mpsc::Receiver<String>,
+    sig_sender: Arc<mpsc::Sender<String>>,
 ) {
     let mut pools_state = PoolsState::default();
     let mints_of_interest = [
@@ -319,7 +321,7 @@ pub async fn receive_entries(
         loop {
             tokio::select! {
                 Some(entries) = entry_receiver.recv() => {
-                    process_entries_batch(entries, &mut pools_state).await;
+                    process_entries_batch(entries, &mut pools_state, sig_sender.clone()).await;
                 }
                 Some(error) = error_receiver.recv() => {
                     error!("{}", error);
@@ -414,6 +416,7 @@ pub async fn initialize_raydium_amm_pools(
 pub async fn process_entries_batch(
     entries: Vec<Entry>,
     pools_state: &mut PoolsState,
+    sig_sender: Arc<mpsc::Sender<String>>,
 ) {
     debug!(
         "OK: entries {} txs: {}",
@@ -437,8 +440,9 @@ pub async fn process_entries_batch(
                 &Pubkey::from_str(RAYDIUM_AMM)
                     .expect("Failed to parse pubkey"),
             ) {
-                info!("{:?}", tx.signatures);
+                info!("{:?}", tx.signatures[0]);
                 pools_state.raydium_amm_count += 1;
+                sig_sender.send(tx.signatures[0].to_string()).await.unwrap();
                 // println!("Raydium AMM tx: {:?}", tx.signatures);
                 pools_state.reduce_raydium_amm_tx(Arc::new(tx)).await;
             };

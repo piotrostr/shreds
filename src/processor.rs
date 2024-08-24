@@ -220,13 +220,24 @@ mod tests {
 
         let (entry_sender, entry_receiver) = mpsc::channel(2000);
         let (error_sender, error_receiver) = mpsc::channel(2000);
+        let (sig_sender, mut sig_receiver) = mpsc::channel(2000);
+
+        tokio::spawn(async move {
+            // gotta clean up the channel, more than 2k txs drop
+            while sig_receiver.recv().await.is_some() {}
+        });
 
         let mut processor = Processor::new(entry_sender, error_sender);
         for raw_shred in raw_shreds {
             processor.collect(Arc::new(raw_shred)).await;
         }
 
-        algo::receive_entries(entry_receiver, error_receiver).await;
+        algo::receive_entries(
+            entry_receiver,
+            error_receiver,
+            Arc::new(sig_sender),
+        )
+        .await;
 
         for handle in processor.handles.drain(..) {
             handle.await.expect("Failed to process batch");

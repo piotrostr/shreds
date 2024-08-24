@@ -10,7 +10,7 @@ use crate::algo::env;
 
 pub async fn listen_pubsub(
     pubkeys: Vec<String>,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<Vec<(u64, String)>, Box<dyn std::error::Error>> {
     let pubsub_client = PubsubClient::new(&env("WS_URL")).await?;
     let (mut stream, unsub) = pubsub_client
         .logs_subscribe(
@@ -21,11 +21,14 @@ pub async fn listen_pubsub(
         )
         .await?;
 
+    let mut sigs = Vec::new();
     while let Some(data) = stream.next().await {
+        let timestamp = chrono::Utc::now().timestamp();
         info!("{:?}", data.value.signature);
+        sigs.push((timestamp as u64, data.value.signature));
     }
 
     unsub().await;
 
-    Ok(())
+    Ok(sigs)
 }
