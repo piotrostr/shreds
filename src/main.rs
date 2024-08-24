@@ -1,4 +1,7 @@
+use indicatif::{ProgressBar, ProgressStyle};
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::time::sleep;
 
 use clap::{command, Parser};
 use log::info;
@@ -76,7 +79,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         });
 
-        sleep_with_progress(20).await;
+        info!("Sleeping for 10 seconds...");
+        sleep_with_progress(10).await;
 
         pubsub_handle.abort();
         shreds_handle.abort();
@@ -97,10 +101,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
-
-use indicatif::{ProgressBar, ProgressStyle};
-use std::time::Duration;
-use tokio::time::sleep;
 
 async fn sleep_with_progress(seconds: u64) {
     let pb = ProgressBar::new(seconds);

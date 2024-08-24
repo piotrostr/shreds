@@ -38,5 +38,9 @@ services:
       dockerfile: Dockerfile
     container_name: bench
     volumes:
+      - type: bind
+        source: ./raydium.json
+        target: /raydium.json
       - .env:/.env
-    command: ["./shreds", "--pubsub"]
+      - ./FAST.json:/FAST.json
+    command: ["./shreds", "--benchmark"]
