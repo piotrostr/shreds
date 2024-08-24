@@ -14,6 +14,8 @@ use crate::structs::ShredVariant;
 
 pub const MAX_SHREDS_PER_SLOT: usize = 32_768 / 2;
 
+/// the shreds should probably be stored in a more efficient way, something like a BTreeMap
+/// probably
 #[derive(Debug)]
 struct BatchInfo {
     shreds: HashMap<u32, Arc<Vec<u8>>>,
