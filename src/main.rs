@@ -50,9 +50,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if cli.benchmark {
-        let bench_sigs =
-            benchmark::listen_pubsub(vec![RAYDIUM_AMM.to_string()]).await?;
-        let shreds_sigs = listener::run_listener_with_algo(&cli.bind).await?;
+        let pubsub_handle = tokio::spawn(async move {
+            benchmark::listen_pubsub(vec![RAYDIUM_AMM.to_string()])
+                .await
+                .expect("pubsub")
+        });
+        let shreds_handle = tokio::spawn(async move {
+            listener::run_listener_with_algo(&cli.bind)
+                .await
+                .expect("shreds")
+        });
+        let (bench_sigs, shreds_sigs) =
+            tokio::try_join!(pubsub_handle, shreds_handle)?;
         let mut miss_count = 0;
         let mut slower_count = 0;
         let mut faster_count = 0;
