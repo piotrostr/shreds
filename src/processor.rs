@@ -229,7 +229,7 @@ mod tests {
         tokio::spawn(async move {
             // gotta clean up the channel, more than 2k txs drop
             while let Some(sig) = sig_receiver.recv().await {
-                let timestamp = chrono::Utc::now().timestamp();
+                let timestamp = chrono::Utc::now().timestamp_millis();
                 info!("shreds: {} {}", timestamp, sig);
             }
         });

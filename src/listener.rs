@@ -84,7 +84,7 @@ pub async fn run_listener_with_algo(
         async move {
             while let Some(sig) = sig_receiver.recv().await {
                 if let Some(shreds_sigs) = &shreds_sigs {
-                    let timestamp = chrono::Utc::now().timestamp();
+                    let timestamp = chrono::Utc::now().timestamp_millis();
                     info!("algo: {} {}", timestamp, sig);
                     shreds_sigs
                         .write()
