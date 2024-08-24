@@ -4,14 +4,19 @@
 // 3) implement calculate amount out for a given amount for both pools for profit search
 // 4) take volume into account when calculating profit and best size (flash loans might be an
 //    option)
+use futures_util::future::join_all;
+use once_cell::sync::Lazy;
 use raydium_amm::math::{Calculator, CheckedCeilDiv, SwapDirection, U128};
+use serde_json::Value;
 use solana_client::nonblocking::rpc_client::RpcClient;
+use solana_sdk::signature::Keypair;
+use solana_sdk::signer::{EncodableKey, Signer};
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use solana_entry::entry::Entry;
 use solana_program::instruction::CompiledInstruction;
 use solana_sdk::message::VersionedMessage;
@@ -19,7 +24,7 @@ use solana_sdk::pubkey::Pubkey;
 use solana_sdk::transaction::VersionedTransaction;
 use tokio::sync::mpsc;
 
-use crate::raydium::{self, download_raydium_json, ParsedAmmInstruction};
+use crate::raydium::{self, ParsedAmmInstruction};
 use raydium_library::amm::{self, openbook, AmmKeys, CalculateResult};
 
 pub const WHIRLPOOL: &str = "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc";
@@ -52,12 +57,12 @@ pub struct RaydiumAmmPool {
     pub state: CalculateResult,
 }
 
-pub fn calculate_price(state: &CalculateResult) -> f64 {
-    let pc_amount = state.pool_pc_vault_amount as f64;
-    let coin_amount = state.pool_coin_vault_amount as f64;
+pub fn calculate_price(state: &CalculateResult) -> u64 {
+    let pc_amount = state.pool_pc_vault_amount;
+    let coin_amount = state.pool_coin_vault_amount;
 
-    if coin_amount == 0.0 {
-        return 0.0; // Avoid division by zero
+    if coin_amount == 0 {
+        return 0; // Avoid division by zero
     }
 
     pc_amount / coin_amount
@@ -121,10 +126,6 @@ impl PoolsState {
 
         match parsed_instruction {
             ParsedAmmInstruction::SwapBaseOut(swap_instruction) => {
-                println!(
-                    "Swap Base Out for AMM {}: {:?}",
-                    amm_id, swap_instruction
-                );
                 self.update_pool_state_swap(
                     &amm_id,
                     &pool_coin_vault,
@@ -136,10 +137,6 @@ impl PoolsState {
                 .await;
             }
             ParsedAmmInstruction::SwapBaseIn(swap_instruction) => {
-                println!(
-                    "Swap Base In for AMM {}: {:?}",
-                    amm_id, swap_instruction
-                );
                 self.update_pool_state_swap(
                     &amm_id,
                     &pool_coin_vault,
@@ -169,10 +166,6 @@ impl PoolsState {
         is_swap_base_in: bool,
     ) {
         if let Some(pool) = self.raydium_pools.get(amm_id) {
-            info!(
-                "Initial price: {}",
-                calculate_price(&pool.read().await.state)
-            );
             let mut pool = pool.write().await;
             // double check here
             let is_coin_to_pc = pool.amm_keys.amm_coin_vault
@@ -266,26 +259,32 @@ impl PoolsState {
                 }
             };
 
+            let initial_price = calculate_price(&pool.state);
+
             // Update pool amounts
             pool.state.pool_pc_vault_amount = pc_amount;
             pool.state.pool_coin_vault_amount = coin_amount;
 
-            // Update CalculateResult
-            let calculate_result = CalculateResult {
-                pool_pc_vault_amount: pc_amount,
-                pool_coin_vault_amount: coin_amount,
-                pool_lp_amount: pool.state.pool_lp_amount,
-                swap_fee_numerator: pool.state.swap_fee_numerator,
-                swap_fee_denominator: pool.state.swap_fee_denominator,
-            };
+            let new_price = calculate_price(&pool.state);
 
-            // Store or use the calculate_result as needed
-            self.raydium_pools.get(amm_id).unwrap().write().await.state =
-                calculate_result;
-
-            info!("Updated price: {}", calculate_price(&pool.state));
+            info!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "event": "Swap",
+                    "swap_direction": format!("{:?}", swap_direction),
+                    "is_swap_base_in": is_swap_base_in,
+                    "amm_id": amm_id.to_string(),
+                    "pc_mint": pool.amm_keys.amm_pc_mint.to_string(),
+                    "amount_specified": amount_specified,
+                    "coin_mint": pool.amm_keys.amm_coin_mint.to_string(),
+                    "other_amount_threshold": other_amount_threshold.to_string(),
+                    "initial_price": initial_price,
+                    "new_price": new_price,
+                }))
+                .unwrap()
+            );
         } else {
-            warn!("Pool not found for AMM ID: {}", amm_id);
+            debug!("Pool not found for AMM ID: {}", amm_id);
         }
     }
 
@@ -310,14 +309,14 @@ pub async fn receive_entries(
         "EbZh3FDVcgnLNbh1ooatcDL1RCRhBgTKirFKNoGPpump", // gringo
         "GYKmdfcUmZVrqfcH1g579BGjuzSRijj3LBuwv79rpump", // wdog
         "8Ki8DpuWNxu9VsS3kQbarsCWMcFGWkzzA8pUPto9zBd5", // lockin
+        "HiHULk2EEF6kGfMar19QywmaTJLUr3LA1em8DyW1pump", // ddc
     ]
     .iter()
     .map(|p| Pubkey::from_str(p).unwrap())
     .collect::<Vec<_>>();
 
     // TODO use nice rpc, possibly geyser at later stage
-    let rpc_client =
-        RpcClient::new("https://api.mainnet-beta.solana.com".to_string());
+    let rpc_client = RpcClient::new(env("RPC_URL").to_string());
 
     initialize_raydium_amm_pools(
         &rpc_client,
@@ -345,54 +344,82 @@ pub async fn receive_entries(
     });
 }
 
+static RAYDIUM_JSON: Lazy<Arc<Value>> = Lazy::new(|| {
+    if !std::path::Path::new("raydium.json").exists() {
+        panic!("raydium.json not found, download it first");
+    }
+    let json_str = std::fs::read_to_string("raydium.json")
+        .expect("Failed to read raydium.json");
+    let json_value: Value = serde_json::from_str(&json_str)
+        .expect("Failed to parse raydium.json");
+    Arc::new(json_value)
+});
+
 pub async fn initialize_raydium_amm_pools(
     rpc_client: &RpcClient,
     pools_state: &mut PoolsState,
     mints_of_interest: Vec<Pubkey>,
 ) {
-    download_raydium_json(false)
-        .await
-        .expect("download raydium");
-    let jsonstr = std::fs::read_to_string("raydium.json")
-        .expect("Failed to read raydium.json");
+    info!("Reading in raydium.json (large file)");
     let amm_keys_map = raydium::parse_raydium_json(
-        Arc::new(jsonstr),
+        RAYDIUM_JSON.clone(),
         mints_of_interest.clone(),
     )
     .expect("parse raydium json");
     let amm_program =
         Pubkey::from_str(RAYDIUM_LIQUIDITY_POOL_V4_PUBKEY).expect("pubkey");
-    for mint in mints_of_interest.iter() {
-        let amm_keys_vec = amm_keys_map.get(mint).unwrap(); // bound to exist
-        for amm_keys in amm_keys_vec.iter() {
-            let market_keys = openbook::get_keys_for_market(
-                rpc_client,
-                &amm_keys.market_program,
-                &amm_keys.market,
-            )
-            .await
-            .expect("get market keys");
-            let state = amm::calculate_pool_vault_amounts(
-                rpc_client,
-                &amm_program,
-                &amm_keys.amm_pool,
-                amm_keys,
-                &market_keys,
-                amm::utils::CalculateMethod::CalculateWithLoadAccount,
-            )
-            .await
-            .expect("calculate pool vault amounts");
+    let payer = Keypair::read_from_file(env("FUND_KEYPAIR_PATH"))
+        .expect("Failed to read keypair");
+    let fee_payer = payer.pubkey();
+
+    // Fetch results
+    let futures = mints_of_interest.iter().map(|mint| {
+        let amm_keys_map = amm_keys_map.clone();
+        async move {
+            let amm_keys_vec = amm_keys_map.get(mint).unwrap(); // bound to exist
+            let mut results = Vec::new();
+            for amm_keys in amm_keys_vec.iter() {
+                info!("Loading AMM keys for pool: {:?}", amm_keys.amm_pool);
+                let market_keys = openbook::get_keys_for_market(
+                    rpc_client,
+                    &amm_keys.market_program,
+                    &amm_keys.market,
+                )
+                .await
+                .expect("get market keys");
+                let state = amm::calculate_pool_vault_amounts(
+                    rpc_client,
+                    &amm_program,
+                    &amm_keys.amm_pool,
+                    amm_keys,
+                    &market_keys,
+                    amm::utils::CalculateMethod::Simulate(fee_payer),
+                )
+                .await
+                .expect("calculate pool vault amounts");
+                results.push((*mint, *amm_keys, state));
+            }
+            results
+        }
+    });
+
+    // Join all futures
+    let all_results = join_all(futures).await;
+
+    // Update pools_state
+    for results in all_results {
+        for (mint, amm_keys, state) in results {
             pools_state.raydium_pools.insert(
                 amm_keys.amm_pool,
                 Arc::new(RwLock::new(RaydiumAmmPool {
-                    token: *mint,
-                    amm_keys: *amm_keys,
+                    token: mint,
+                    amm_keys,
                     state,
                 })),
             );
             pools_state
                 .raydium_pools_by_mint
-                .entry(*mint)
+                .entry(mint)
                 .or_default()
                 .push(amm_keys.amm_pool);
         }
@@ -403,7 +430,7 @@ pub async fn process_entries_batch(
     entries: Vec<Entry>,
     pools_state: &mut PoolsState,
 ) {
-    info!(
+    debug!(
         "OK: entries {} txs: {}",
         entries.len(),
         entries.iter().map(|e| e.transactions.len()).sum::<usize>(),
@@ -426,15 +453,21 @@ pub async fn process_entries_batch(
                     .expect("Failed to parse pubkey"),
             ) {
                 pools_state.raydium_amm_count += 1;
-                println!("Raydium AMM tx: {:?}", tx.signatures);
+                // println!("Raydium AMM tx: {:?}", tx.signatures);
                 pools_state.reduce_raydium_amm_tx(Arc::new(tx)).await;
             };
         }
     }
-    info!(
+    debug!(
         "orca: {}, raydium cp: {}, raydium amm: {}",
         pools_state.orca_count,
         pools_state.raydium_cp_count,
         pools_state.raydium_amm_count
     );
+}
+
+pub fn env(key: &str) -> String {
+    std::env::var(key).unwrap_or_else(|_| {
+        panic!("{} env var not set", key);
+    })
 }

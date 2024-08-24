@@ -1,3 +1,4 @@
+.env
 context.txt
 *.json
 packets.json

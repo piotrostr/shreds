@@ -1,4 +1,4 @@
-use log::{debug, error};
+use log::{debug, error, trace};
 use solana_entry::entry::Entry;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -86,7 +86,7 @@ impl Processor {
         if let Some(slot_map) = self.data_shreds.get_mut(&slot) {
             if let Some(batch_info) = slot_map.get_mut(&batch_tick) {
                 if batch_info.is_last_shred && is_batch_ready(batch_info) {
-                    debug!("Sending Slot {} Batch {}", slot, batch_tick);
+                    trace!("Sending Slot {} Batch {}", slot, batch_tick);
                     let batch_shreds = std::mem::take(&mut batch_info.shreds);
                     let entry_sender = self.entry_sender.clone();
                     let error_sender = self.error_sender.clone();
@@ -125,9 +125,10 @@ impl Processor {
                         self.data_shreds.remove(&slot);
                     }
                 } else {
-                    debug!(
+                    trace!(
                         "Slot {} Batch {} is not ready for processing",
-                        slot, batch_tick
+                        slot,
+                        batch_tick
                     );
                 }
             }
@@ -204,6 +205,7 @@ mod tests {
 
     #[tokio::test]
     async fn processor_works() {
+        dotenv::dotenv().ok();
         env_logger::Builder::default()
             .format_module_path(false)
             .filter_level(log::LevelFilter::Info)

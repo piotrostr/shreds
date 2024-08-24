@@ -151,14 +151,13 @@ pub async fn download_raydium_json(
 // returns all of the
 // pools for a given token, to be filtered later for relevant
 pub fn parse_raydium_json(
-    jsonstr: Arc<String>,
+    raydium_json: Arc<Value>,
     mints_of_interest: Vec<Pubkey>,
 ) -> Result<HashMap<Pubkey, Vec<AmmKeys>>, Box<dyn std::error::Error>> {
     let mut result = HashMap::new();
-    let all: Value = serde_json::from_str(&jsonstr).unwrap();
     info!("Parsing relevant pools");
 
-    let pools = all["unOfficial"].as_array().unwrap();
+    let pools = raydium_json["unOfficial"].as_array().unwrap();
     let total_pools = pools.len();
 
     let pb = ProgressBar::new(total_pools as u64);

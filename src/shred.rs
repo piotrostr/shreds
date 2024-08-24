@@ -3,7 +3,7 @@ use solana_ledger::shred::{ReedSolomonCache, ShredFlags, Shredder};
 use std::collections::{HashMap, HashSet};
 
 use crate::structs::ShredVariant;
-use log::{debug, error, info, warn};
+use log::{debug, error, info, trace, warn};
 use solana_entry::entry::Entry;
 use solana_ledger::shred::{Error, Shred};
 use solana_sdk::signature::SIGNATURE_BYTES;
@@ -63,8 +63,8 @@ pub fn deserialize_entries(
     if entry_count > 10_000 {
         return Err(format!("entry count: {}", entry_count).into());
     }
-    debug!("Entry count prefix: {}", entry_count);
-    debug!("First 16 bytes of payload: {:?}", &payload[..16]);
+    trace!("Entry count prefix: {}", entry_count);
+    trace!("First 16 bytes of payload: {:?}", &payload[..16]);
 
     // SUPER CRUCIAL
     // you cannot just Ok(bincode::deserialize(&payload[8..])?)
