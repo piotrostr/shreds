@@ -25,8 +25,10 @@ services:
     container_name: shreds
     command: ["./shreds", "--bind", "0.0.0.0:8001"]
     volumes:
+      - type: bind
+        source: ./raydium.json
+        target: /raydium.json
       - .env:/.env
       - ./FAST.json:/FAST.json
-      - ./raydium.json:/raydium.json
     ports:
       - "8001:8001/udp"
