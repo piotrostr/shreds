@@ -1,6 +1,6 @@
 use futures_util::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
-use log::{info, warn};
+use log::{error, info, warn};
 use raydium_amm::math::{CheckedCeilDiv, SwapDirection, U128};
 use raydium_library::amm::{AmmKeys, CalculateResult};
 use reqwest::Client;
@@ -46,7 +46,7 @@ pub fn calculate_price(
     let coin_amount = state.pool_coin_vault_amount;
 
     if coin_amount == 0 {
-        panic!("Coin amount is 0");
+        error!("Coin amount is 0");
     }
 
     // Adjust for decimals

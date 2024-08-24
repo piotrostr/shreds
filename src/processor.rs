@@ -183,7 +183,7 @@ pub async fn handle_batch(
 
     // Check if batch complete
     let last = shreds.last().expect("last shred");
-    assert!(last.data_complete());
+    assert!(last.data_complete() || last.last_in_slot());
 
     // Process shreds
     let deshredded_data = deshred(&shreds);
