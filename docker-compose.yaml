@@ -12,8 +12,6 @@ services:
     volumes:
       - ./auth.json:/app/auth.json
     network_mode: host
-    depends_on:
-      - shreds
 
   shreds:
     image: piotrostr/shreds
