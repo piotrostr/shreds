@@ -100,12 +100,28 @@ impl PoolsState {
         let pool_coin_token_account_index = 5; // Pool Coin Token Account index
         let pool_pc_token_account_index = 6; // Pool Pc Token Account index
 
-        let amm_id = message.static_account_keys()
-            [instruction.accounts[amm_id_index] as usize];
-        let pool_coin_vault = message.static_account_keys()
-            [instruction.accounts[pool_coin_token_account_index] as usize];
-        let pool_pc_vault = message.static_account_keys()
-            [instruction.accounts[pool_pc_token_account_index] as usize];
+        let amm_id =
+            get_account_key_safely(message, instruction, amm_id_index);
+        let pool_coin_vault = get_account_key_safely(
+            message,
+            instruction,
+            pool_coin_token_account_index,
+        );
+        let pool_pc_vault = get_account_key_safely(
+            message,
+            instruction,
+            pool_pc_token_account_index,
+        );
+        if amm_id.is_none()
+            || pool_coin_vault.is_none()
+            || pool_pc_vault.is_none()
+        {
+            warn!("Failed to get account keys for Raydium AMM instruction");
+            return;
+        }
+        let amm_id = amm_id.unwrap();
+        let pool_coin_vault = pool_coin_vault.unwrap();
+        let pool_pc_vault = pool_pc_vault.unwrap();
 
         match parsed_instruction {
             ParsedAmmInstruction::SwapBaseOut(swap_instruction) => {
@@ -429,4 +445,15 @@ pub fn env(key: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| {
         panic!("{} env var not set", key);
     })
+}
+fn get_account_key_safely(
+    message: &VersionedMessage,
+    instruction: &CompiledInstruction,
+    account_index: usize,
+) -> Option<Pubkey> {
+    instruction
+        .accounts
+        .get(account_index)
+        .and_then(|&index| message.static_account_keys().get(index as usize))
+        .copied()
 }
