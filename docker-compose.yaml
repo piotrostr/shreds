@@ -13,6 +13,8 @@ services:
     volumes:
       - ./auth.json:/app/auth.json
     network_mode: host
+    depends_on:
+      - shreds
 
   shreds:
     image: piotrostr/shreds
@@ -25,5 +27,6 @@ services:
     volumes:
       - .env:/.env
       - ./FAST.json:/FAST.json
+      - ./raydium.json:/raydium.json
     ports:
       - "8001:8001/udp"
