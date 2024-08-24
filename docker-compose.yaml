@@ -22,5 +22,8 @@ services:
       dockerfile: Dockerfile
     container_name: shreds
     command: ["./shreds", "--bind", "0.0.0.0:8001"]
+    volumes:
+      - .env:/.env
+      - ./FAST.json:/FAST.json
     ports:
       - "8001:8001/udp"
