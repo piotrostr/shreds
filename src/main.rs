@@ -76,9 +76,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         });
 
-        tokio::signal::ctrl_c()
-            .await
-            .expect("Failed to listen for Ctrl+C");
+        sleep_with_progress(30).await;
 
         pubsub_handle.abort();
         shreds_handle.abort();
@@ -98,4 +96,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+use indicatif::{ProgressBar, ProgressStyle};
+use std::time::Duration;
+use tokio::time::sleep;
+
+async fn sleep_with_progress(seconds: u64) {
+    let pb = ProgressBar::new(seconds);
+    pb.set_style(ProgressStyle::default_bar()
+        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})")
+        .unwrap()
+        .progress_chars("#>-"));
+
+    for _ in 0..seconds {
+        sleep(Duration::from_secs(1)).await;
+        pb.inc(1);
+    }
+
+    pb.finish_with_message("Done!");
 }

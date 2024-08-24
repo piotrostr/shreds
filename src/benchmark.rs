@@ -31,7 +31,6 @@ pub async fn listen_pubsub(
     while let Some(data) = stream.next().await {
         let timestamp = chrono::Utc::now().timestamp();
         let mut sigs = sigs.write().await;
-        info!("pubsub: {:?}", data.value.signature);
         sigs.push((timestamp as u64, data.value.signature));
     }
 
