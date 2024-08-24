@@ -1,6 +1,6 @@
 use futures_util::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
-use log::{error, info, warn};
+use log::{info, warn};
 use raydium_amm::math::{CheckedCeilDiv, SwapDirection, U128};
 use raydium_library::amm::{AmmKeys, CalculateResult};
 use reqwest::Client;
@@ -41,23 +41,18 @@ pub struct RaydiumAmmPool {
 pub fn calculate_price(
     state: &CalculateResult,
     decimals: &RaydiumDecimals,
-) -> u64 {
-    let pc_amount = state.pool_pc_vault_amount;
-    let coin_amount = state.pool_coin_vault_amount;
-
-    if coin_amount == 0 {
-        error!("Coin amount is 0");
+) -> Option<u64> {
+    if state.pool_coin_vault_amount == 0 {
+        return None;
     }
-
-    // Adjust for decimals
     let pc_decimals = 10u64.pow(decimals.pc_decimals as u32);
     let coin_decimals = 10u64.pow(decimals.coin_decimals as u32);
 
-    let adjusted_pc_amount = pc_amount / pc_decimals;
-    let adjusted_coin_amount = coin_amount / coin_decimals;
+    // Calculate price maintaining full precision
+    let price = (state.pool_pc_vault_amount / pc_decimals)
+        / (state.pool_coin_vault_amount / coin_decimals);
 
-    // Calculate price
-    adjusted_pc_amount / adjusted_coin_amount
+    Some(price)
 }
 
 #[derive(Debug)]
