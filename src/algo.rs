@@ -254,6 +254,21 @@ impl PoolsState {
             pool.state.pool_coin_vault_amount = coin_amount;
 
             let new_price = calculate_price(&pool.state, &pool.decimals);
+            // slippage is token in * price expected and min amount out
+            let slippage = if initial_price.is_some() {
+                let initial_price = initial_price.unwrap();
+                if is_swap_base_in {
+                    (amount_specified as f64 * initial_price as f64
+                        - other_amount_threshold as f64)
+                        / other_amount_threshold as f64
+                } else {
+                    (other_amount_threshold as f64 * initial_price as f64
+                        - amount_specified as f64)
+                        / amount_specified as f64
+                }
+            } else {
+                0.0
+            };
 
             info!(
                 "{}",
@@ -269,6 +284,7 @@ impl PoolsState {
                     "other_amount_threshold": other_amount_threshold,
                     "initial_price": initial_price,
                     "new_price": new_price,
+                    "slippage": slippage,
                 }))
                 .unwrap()
             );
