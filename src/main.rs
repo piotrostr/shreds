@@ -56,6 +56,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .expect("pubsub")
         });
         let shreds_handle = tokio::spawn(async move {
+            tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
             listener::run_listener_with_algo(&cli.bind)
                 .await
                 .expect("shreds")
