@@ -33,6 +33,9 @@ struct Cli {
 
     #[arg(long)]
     benchmark: bool,
+
+    #[arg(long)]
+    pubsub: bool,
 }
 
 #[tokio::main(flavor = "multi_thread")]
@@ -51,6 +54,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if cli.download {
         download_raydium_json(true).await?;
+        return Ok(());
+    }
+
+    if cli.pubsub {
+        let pubsub_sigs = Arc::new(RwLock::new(Vec::new()));
+
+        let pubsub_handle = tokio::spawn({
+            let pubsub_sigs = pubsub_sigs.clone();
+            async move {
+                tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+                benchmark::listen_pubsub(
+                    vec![RAYDIUM_AMM.to_string()],
+                    pubsub_sigs,
+                )
+                .await
+                .expect("pubsub")
+            }
+        });
+
+        tokio::signal::ctrl_c()
+            .await
+            .expect("Failed to listen for Ctrl+C");
+
+        pubsub_handle.await?;
+
         return Ok(());
     }
 
