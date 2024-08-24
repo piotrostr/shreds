@@ -23,7 +23,6 @@ WORKDIR /shreds
 COPY ./Cargo.toml ./Cargo.toml
 COPY ./Cargo.lock ./Cargo.lock
 
-RUN cargo update
 RUN cargo build --release
 RUN rm src/*.rs
 
