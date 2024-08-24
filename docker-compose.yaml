@@ -44,3 +44,5 @@ services:
       - .env:/.env
       - ./FAST.json:/FAST.json
     command: ["./shreds", "--benchmark"]
+    ports:
+      - "8001:8001/udp"
