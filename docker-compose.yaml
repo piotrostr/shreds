@@ -32,3 +32,14 @@ services:
       - ./FAST.json:/FAST.json
     ports:
       - "8001:8001/udp"
+
+  bench:
+    image: piotrostr/shreds
+    platform: linux/amd64
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bench
+    volumes:
+      - .env:/.env
+    command: ["./shreds", "--pubsub"]
