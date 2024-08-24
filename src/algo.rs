@@ -1,132 +1,81 @@
+// TODOs
+// 1) in the algo, ensure that ATAs are already created, this saves some ixs
+// 2) validate the pool update is correct
+// 3) implement calculate amount out for a given amount for both pools for profit search
+// 4) take volume into account when calculating profit and best size (flash loans might be an
+//    option)
+use raydium_amm::math::{Calculator, CheckedCeilDiv, SwapDirection, U128};
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use log::{error, info};
+use log::{error, info, warn};
 use solana_entry::entry::Entry;
+use solana_program::instruction::CompiledInstruction;
+use solana_sdk::message::VersionedMessage;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::transaction::VersionedTransaction;
 use tokio::sync::mpsc;
 
 use crate::raydium::{self, ParsedAmmInstruction};
+use raydium_library::amm::{AmmKeys, CalculateResult};
 
-// this has to contain the pool information for a given token
-// i want to be able to add those tokens manually for starters,
-// like PubkeySomethingasdfasdf...pump, etc etc; those are probably going to be added with their
-// corresponding pubkeys, the amm program pubkey, all of the required accounts for the swap tx
-// then it tracks the pool state and looks for arbitrage opps every time there is a new transaction
-// that updates the pool as a callback
-// as soon as there is profit to be made, send the transaction and set profitable in/out token for
-// each of the pools
-// easy A->B B->A arbitrage, orca and raydium only
-// 1. at start, fetch the pool state at starting slot
-// 2. for every new slot, include the newly received transactions
-// 3. after each batch, check if there is an arbitrage opportunity
-// 4. if there is, send the transaction superfast, probably tipping etc gonna be crucial
-// no on-chain program for swapping just yet, just ensure that transaction is profitable by
-// calculating the final amount out and adding the fees
 #[derive(Debug, Default)]
 pub struct PoolsState {
-    pub raydium_cp_count: u64, // TODO add this later, test with AMM first
+    pub raydium_cp_count: u64,
     pub raydium_amm_count: u64,
     pub orca_count: u64,
     pub orca_token_to_pool: HashMap<Pubkey, Arc<OrcaPool>>,
-    pub raydium_amm_token_to_pool:
-        HashMap<Pubkey, Arc<RwLock<RaydiumAmmPool>>>,
+    pub raydium_pools: HashMap<Pubkey, Arc<RwLock<RaydiumAmmPool>>>,
 }
 
-/// those pools contain all of the required pubkeys for making the transactions
-/// those are loaded during startup
 #[derive(Debug, Default)]
 pub struct OrcaPool {}
 
-/// Raydium AMM pool information
+// TODO there might be sol-token or token-sol both versions, gotta be able to handle both
 #[derive(Debug, Clone)]
 pub struct RaydiumAmmPool {
-    pub id: Pubkey,
-    pub base_mint: Pubkey,
-    pub quote_mint: Pubkey,
-    pub lp_mint: Pubkey,
+    pub token: Pubkey,
     pub program_id: Pubkey,
-    pub authority: Pubkey,
-    pub open_orders: Pubkey,
-    pub target_orders: Pubkey,
-    pub base_vault: Pubkey,
-    pub quote_vault: Pubkey,
-    pub withdraw_queue: Pubkey,
-    pub lp_vault: Pubkey,
-    pub market_program_id: Pubkey,
-    pub market_id: Pubkey,
-    pub market_authority: Pubkey,
-    pub market_base_vault: Pubkey,
-    pub market_quote_vault: Pubkey,
-    pub market_bids: Pubkey,
-    pub market_asks: Pubkey,
-    pub market_event_queue: Pubkey,
-    pub base_balance: u64,
-    pub quote_balance: u64,
+    pub amm_keys: AmmKeys,
+    pub state: CalculateResult,
 }
 
 impl PoolsState {
     pub fn reduce_orca_tx(&mut self, _tx: VersionedTransaction) {
-        // TODO
+        // TODO: Implement Orca transaction processing
     }
 
     pub async fn reduce_raydium_amm_tx(
         &mut self,
         tx: Arc<VersionedTransaction>,
     ) {
-        // Extract the program ID and instruction data from the transaction
-        let program_id = tx.message.static_account_keys()[0];
-        let instruction = &tx.message.instructions()[0];
-        let instruction_data = instruction.data.as_slice();
+        let raydium_amm_program_id = Pubkey::from_str(RAYDIUM_AMM)
+            .expect("Failed to parse Raydium AMM program ID");
 
-        // Parse the instruction
-        match raydium::parse_amm_instruction(instruction_data) {
-            Ok(parsed_instruction) => {
-                match parsed_instruction {
-                    ParsedAmmInstruction::SwapBaseIn(swap_instruction) => {
-                        println!(
-                            "SwapBaseIn: amount_in={}, minimum_amount_out={}",
-                            swap_instruction.amount_in,
-                            swap_instruction.minimum_amount_out
-                        );
-                        // Update pool state based on swap
-                    }
-                    ParsedAmmInstruction::SwapBaseOut(swap_instruction) => {
-                        println!(
-                            "SwapBaseOut: max_amount_in={}, amount_out={}",
-                            swap_instruction.max_amount_in,
-                            swap_instruction.amount_out
-                        );
-                        // Update pool state based on swap
-                    }
-                    // Handle other instruction types...
-                    _ => println!(
-                        "Unhandled instruction type: {:?}",
-                        parsed_instruction
-                    ),
-                }
+        for (idx, instruction) in tx.message.instructions().iter().enumerate()
+        {
+            let program_id = tx.message.static_account_keys()
+                [instruction.program_id_index as usize];
 
-                // Check for arbitrage opportunity
-                if let Some(pool) =
-                    self.raydium_amm_token_to_pool.get(&program_id)
-                {
-                    let pool = pool.read().await;
-                    if let Some(profit) =
-                        self.check_arbitrage_opportunity(pool.clone())
-                    {
-                        info!(
-                            "Arbitrage opportunity found with profit: {}",
-                            profit
+            if program_id == raydium_amm_program_id {
+                match raydium::parse_amm_instruction(&instruction.data) {
+                    Ok(parsed_instruction) => {
+                        self.process_raydium_instruction(
+                            parsed_instruction,
+                            instruction,
+                            &tx.message,
+                        )
+                        .await;
+                    }
+                    Err(e) => {
+                        println!(
+                            "Error parsing instruction {}: {:?}",
+                            idx, e
                         );
-                        // TODO: Implement arbitrage execution
                     }
                 }
-            }
-            Err(e) => {
-                println!("Error parsing instruction: {:?}", e);
             }
         }
     }
@@ -135,13 +84,192 @@ impl PoolsState {
         panic!("Not implemented yet");
     }
 
-    fn check_arbitrage_opportunity(
+    async fn process_raydium_instruction(
+        &mut self,
+        parsed_instruction: ParsedAmmInstruction,
+        instruction: &CompiledInstruction,
+        message: &VersionedMessage,
+    ) {
+        let amm_id_index = 1; // Amm account index
+        let pool_coin_token_account_index = 5; // Pool Coin Token Account index
+        let pool_pc_token_account_index = 6; // Pool Pc Token Account index
+
+        let amm_id = message.static_account_keys()
+            [instruction.accounts[amm_id_index] as usize];
+        let pool_coin_vault = message.static_account_keys()
+            [instruction.accounts[pool_coin_token_account_index] as usize];
+        let pool_pc_vault = message.static_account_keys()
+            [instruction.accounts[pool_pc_token_account_index] as usize];
+
+        match parsed_instruction {
+            ParsedAmmInstruction::SwapBaseOut(swap_instruction) => {
+                println!(
+                    "Swap Base Out for AMM {}: {:?}",
+                    amm_id, swap_instruction
+                );
+                self.update_pool_state_swap(
+                    &amm_id,
+                    &pool_coin_vault,
+                    &pool_pc_vault,
+                    swap_instruction.max_amount_in,
+                    swap_instruction.amount_out,
+                    false,
+                )
+                .await;
+            }
+            ParsedAmmInstruction::SwapBaseIn(swap_instruction) => {
+                println!(
+                    "Swap Base In for AMM {}: {:?}",
+                    amm_id, swap_instruction
+                );
+                self.update_pool_state_swap(
+                    &amm_id,
+                    &pool_coin_vault,
+                    &pool_pc_vault,
+                    swap_instruction.amount_in,
+                    swap_instruction.minimum_amount_out,
+                    true,
+                )
+                .await;
+            }
+            // Handle other instruction types...
+            _ => println!(
+                "Unhandled instruction type: {:?}",
+                parsed_instruction
+            ),
+        }
+    }
+
+    // this might work but also might not work
+    // code is from raydium
+    async fn update_pool_state_swap(
+        &mut self,
+        amm_id: &Pubkey,
+        pool_coin_vault: &Pubkey,
+        pool_pc_vault: &Pubkey,
+        amount_specified: u64,
+        other_amount_threshold: u64,
+        is_swap_base_in: bool,
+    ) {
+        if let Some(pool) = self.raydium_pools.get(amm_id) {
+            let mut pool = pool.write().await;
+            // double check here
+            let is_coin_to_pc = pool.amm_keys.amm_coin_vault
+                == *pool_coin_vault
+                && pool.amm_keys.amm_pc_vault == *pool_pc_vault;
+
+            let swap_direction = if is_coin_to_pc {
+                SwapDirection::Coin2PC
+            } else {
+                SwapDirection::PC2Coin
+            };
+
+            let (pc_amount, coin_amount) = if is_swap_base_in {
+                let swap_fee = U128::from(amount_specified)
+                    .checked_mul(pool.state.swap_fee_numerator.into())
+                    .unwrap()
+                    .checked_ceil_div(pool.state.swap_fee_denominator.into())
+                    .unwrap()
+                    .0;
+                let swap_in_after_deduct_fee = U128::from(amount_specified)
+                    .checked_sub(swap_fee)
+                    .unwrap();
+                let swap_amount_out = Calculator::swap_token_amount_base_in(
+                    swap_in_after_deduct_fee,
+                    pool.state.pool_pc_vault_amount.into(),
+                    pool.state.pool_coin_vault_amount.into(),
+                    swap_direction,
+                )
+                .as_u64();
+
+                if is_coin_to_pc {
+                    (
+                        pool.state
+                            .pool_pc_vault_amount
+                            .saturating_add(swap_amount_out),
+                        pool.state
+                            .pool_coin_vault_amount
+                            .saturating_sub(amount_specified),
+                    )
+                } else {
+                    (
+                        pool.state
+                            .pool_pc_vault_amount
+                            .saturating_sub(amount_specified),
+                        pool.state
+                            .pool_coin_vault_amount
+                            .saturating_add(swap_amount_out),
+                    )
+                }
+            } else {
+                let swap_in_before_add_fee =
+                    Calculator::swap_token_amount_base_out(
+                        other_amount_threshold.into(),
+                        pool.state.pool_pc_vault_amount.into(),
+                        pool.state.pool_coin_vault_amount.into(),
+                        swap_direction,
+                    );
+                let swap_in_after_add_fee = swap_in_before_add_fee
+                    .checked_mul(pool.state.swap_fee_denominator.into())
+                    .unwrap()
+                    .checked_ceil_div(
+                        (pool
+                            .state
+                            .swap_fee_denominator
+                            .checked_sub(pool.state.swap_fee_numerator)
+                            .unwrap())
+                        .into(),
+                    )
+                    .unwrap()
+                    .0
+                    .as_u64();
+
+                if is_coin_to_pc {
+                    (
+                        pool.state
+                            .pool_pc_vault_amount
+                            .saturating_add(other_amount_threshold),
+                        pool.state
+                            .pool_coin_vault_amount
+                            .saturating_sub(swap_in_after_add_fee),
+                    )
+                } else {
+                    (
+                        pool.state
+                            .pool_pc_vault_amount
+                            .saturating_sub(swap_in_after_add_fee),
+                        pool.state
+                            .pool_coin_vault_amount
+                            .saturating_add(other_amount_threshold),
+                    )
+                }
+            };
+
+            // Update pool amounts
+            pool.state.pool_pc_vault_amount = pc_amount;
+            pool.state.pool_coin_vault_amount = coin_amount;
+
+            // Update CalculateResult
+            let calculate_result = CalculateResult {
+                pool_pc_vault_amount: pc_amount,
+                pool_coin_vault_amount: coin_amount,
+                pool_lp_amount: pool.state.pool_lp_amount,
+                swap_fee_numerator: pool.state.swap_fee_numerator,
+                swap_fee_denominator: pool.state.swap_fee_denominator,
+            };
+
+            // Store or use the calculate_result as needed
+            self.raydium_pools.get(amm_id).unwrap().write().await.state =
+                calculate_result;
+        } else {
+            warn!("Pool not found for AMM ID: {}", amm_id);
+        }
+    }
+
+    fn _check_arbitrage_opportunity(
         &self,
         _pool: RaydiumAmmPool,
     ) -> Option<f64> {
-        // TODO: Implement arbitrage checking logic
-        // This should calculate if there's a profitable arbitrage opportunity
-        // and return the potential profit if there is one
         None
     }
 }
@@ -156,7 +284,6 @@ pub async fn receive_entries(
 ) {
     let mut pools_state = PoolsState::default();
 
-    // Initialize Raydium AMM pools
     initialize_raydium_amm_pools(&mut pools_state);
 
     tokio::spawn(async move {
@@ -175,8 +302,14 @@ pub async fn receive_entries(
 
 fn initialize_raydium_amm_pools(_pools_state: &mut PoolsState) {
     // TODO: Initialize Raydium AMM pools with their details
-    // This should populate the raydium_amm_token_to_pool HashMap
-    // with the pool details similar to the TypeScript example
+    // This should populate the raydium_pools HashMap
+    // Example:
+    // let pool = RaydiumAmmPool {
+    //     id: Pubkey::from_str("...").unwrap(),
+    //     base_mint: Pubkey::from_str("...").unwrap(),
+    //     // ... initialize other fields
+    // };
+    // pools_state.raydium_pools.insert(pool.id, Arc::new(RwLock::new(pool)));
 }
 
 pub async fn process_entries_batch(
@@ -189,30 +322,25 @@ pub async fn process_entries_batch(
         entries.iter().map(|e| e.transactions.len()).sum::<usize>(),
     );
     for entry in entries {
-        // this counter is ineffective, only for testing purposes
         for tx in entry.transactions {
             if tx.message.static_account_keys().contains(
                 &Pubkey::from_str(WHIRLPOOL).expect("Failed to parse pubkey"),
             ) {
-                info!("OK: Found whirlpool tx {:?}", tx.signatures);
                 pools_state.orca_count += 1;
                 pools_state.reduce_orca_tx(tx);
             } else if tx.message.static_account_keys().contains(
                 &Pubkey::from_str(RAYDIUM_CP)
                     .expect("Failed to parse pubkey"),
             ) {
-                info!("OK: Found Raydium CP tx {:?}", tx.signatures);
                 pools_state.raydium_cp_count += 1;
-                pools_state.reduce_raydium_cp_tx(tx);
+                // pools_state.reduce_raydium_cp_tx(tx);
             } else if tx.message.static_account_keys().contains(
                 &Pubkey::from_str(RAYDIUM_AMM)
                     .expect("Failed to parse pubkey"),
             ) {
-                info!("OK: Found Raydium AMM tx {:?}", tx.signatures);
                 pools_state.raydium_amm_count += 1;
-                println!("{:?}", tx);
+                println!("Raydium AMM tx: {:?}", tx.signatures);
                 pools_state.reduce_raydium_amm_tx(Arc::new(tx)).await;
-                panic!("Raydium AMM tx found");
             };
         }
     }

@@ -18,6 +18,7 @@ solana-program = "=1.16.27"
 solana-sdk = "=1.16.27"
 timed = "0.2.1"
 tokio = { version = "1.39.2", features = ["full"] }
-raydium_amm = { version = "0.3.0", git = "https://github.com/raydium-io/raydium-amm" }
+raydium_amm = { version = "0.3.0", git = "https://github.com/piotrostr/raydium-amm" }
+raydium-library = { git = "https://github.com/piotrostr/raydium-library" }
 anchor-lang = "=0.29.0"
 anchor-client = "=0.29.0"

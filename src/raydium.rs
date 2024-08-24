@@ -77,7 +77,7 @@ pub fn parse_amm_instruction(
 }
 
 fn unpack_u8(input: &[u8]) -> Result<(u8, &[u8]), ProgramError> {
-    if input.len() >= 1 {
+    if !input.is_empty() {
         let (amount, rest) = input.split_at(1);
         let amount = amount[0];
         Ok((amount, rest))
