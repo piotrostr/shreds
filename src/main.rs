@@ -4,6 +4,8 @@ use shreds::listener;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    dotenv::dotenv().ok();
+
     let matches = App::new("shreds")
         .version("1.0")
         .author("piotrostr")
