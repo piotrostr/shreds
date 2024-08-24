@@ -3,10 +3,11 @@ use std::io::Write;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::signal;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration};
 
 use crate::algo;
+use crate::benchmark::Sigs;
 use crate::processor::Processor;
 
 pub const PACKET_SIZE: usize = 1280 - 40 - 8;
@@ -42,7 +43,8 @@ pub async fn dump_to_file(received_packets: Arc<Mutex<Vec<Vec<u8>>>>) {
 
 pub async fn run_listener_with_algo(
     bind_addr: &str,
-) -> Result<Vec<(u64, String)>, Box<dyn std::error::Error>> {
+    shreds_sigs: Option<Sigs>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let socket = Arc::new(
         UdpSocket::bind(bind_addr)
             .await
@@ -77,22 +79,22 @@ pub async fn run_listener_with_algo(
         .await;
     });
 
-    let sigs = Arc::new(RwLock::new(Vec::new()));
     tokio::spawn({
-        let sigs = sigs.clone();
+        let shreds_sigs = shreds_sigs.clone();
         async move {
             while let Some(sig) = sig_receiver.recv().await {
-                let mut sigs = sigs.write().await;
-                let timestamp = chrono::Utc::now().timestamp();
-                info!("algo: {:?}", sig);
-                sigs.push((timestamp as u64, sig.clone()));
+                if let Some(shreds_sigs) = &shreds_sigs {
+                    let timestamp = chrono::Utc::now().timestamp();
+                    let mut shreds_sigs = shreds_sigs.write().await;
+                    shreds_sigs.push((timestamp as u64, sig.clone()));
+                }
             }
         }
     });
 
     signal::ctrl_c().await.expect("Failed to listen for Ctrl+C");
 
-    Ok(sigs.clone().read().await.clone())
+    Ok(())
 }
 
 pub async fn run_listener_with_save(

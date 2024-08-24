@@ -1,10 +1,12 @@
-use std::collections::HashMap;
+use std::sync::Arc;
 
 use clap::{command, Parser};
 use log::info;
 use shreds::algo::RAYDIUM_AMM;
+use shreds::benchmark::compare_results;
 use shreds::raydium::download_raydium_json;
 use shreds::{benchmark, listener};
+use tokio::sync::RwLock;
 
 #[derive(Parser)]
 #[command(name = "shreds", version = "1.0", author = "piotrostr")]
@@ -50,62 +52,49 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if cli.benchmark {
-        let pubsub_handle = tokio::spawn(async move {
-            tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
-            benchmark::listen_pubsub(vec![RAYDIUM_AMM.to_string()])
+        let pubsub_sigs = Arc::new(RwLock::new(Vec::new()));
+        let shreds_sigs = Arc::new(RwLock::new(Vec::new()));
+
+        let pubsub_handle = tokio::spawn({
+            let pubsub_sigs = pubsub_sigs.clone();
+            async move {
+                tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+                benchmark::listen_pubsub(
+                    vec![RAYDIUM_AMM.to_string()],
+                    pubsub_sigs,
+                )
                 .await
                 .expect("pubsub")
-        });
-        let shreds_handle = tokio::spawn(async move {
-            listener::run_listener_with_algo(&cli.bind)
-                .await
-                .expect("shreds")
-        });
-
-        info!("Waiting for 20 seconds");
-        tokio::time::sleep(tokio::time::Duration::from_secs(20)).await;
-
-        let (bench_sigs, shreds_sigs) =
-            tokio::try_join!(pubsub_handle, shreds_handle)?;
-
-        let mut miss_count = 0;
-        let mut slower_count = 0;
-        let mut faster_count = 0;
-        let mut shreds_sigs_timestamps = HashMap::new();
-        for (timestamp, sig) in shreds_sigs.iter() {
-            shreds_sigs_timestamps.insert(sig, timestamp);
-        }
-        for (timestamp, sig) in bench_sigs.iter() {
-            if let Some(shreds_timestamp) = shreds_sigs_timestamps.get(sig) {
-                match shreds_timestamp.cmp(&timestamp) {
-                    std::cmp::Ordering::Equal => {}
-                    std::cmp::Ordering::Less => {
-                        slower_count += 1;
-                    }
-                    std::cmp::Ordering::Greater => {
-                        faster_count += 1;
-                    }
-                }
-            } else {
-                miss_count += 1;
             }
-        }
+        });
+        let shreds_handle = tokio::spawn({
+            let shreds_sigs = shreds_sigs.clone();
+            async move {
+                listener::run_listener_with_algo(&cli.bind, Some(shreds_sigs))
+                    .await
+                    .expect("shreds")
+            }
+        });
 
-        info!("Benchmark sigs: {}", bench_sigs.len());
-        info!("Shreds sigs: {}", shreds_sigs.len());
-        info!("Miss count: {}", miss_count);
-        info!("Slower count: {}", slower_count);
-        info!("Faster count: {}", faster_count);
+        tokio::signal::ctrl_c()
+            .await
+            .expect("Failed to listen for Ctrl+C");
+
+        pubsub_handle.abort();
+        shreds_handle.abort();
+
+        compare_results(
+            pubsub_sigs.read().await.clone(),
+            shreds_sigs.read().await.clone(),
+        );
 
         return Ok(());
-    }
-
-    if cli.save {
+    } else if cli.save {
         info!("Running in save mode");
         listener::run_listener_with_save(&cli.bind).await?;
     } else {
         info!("Running in algo mode");
-        listener::run_listener_with_algo(&cli.bind).await?;
+        listener::run_listener_with_algo(&cli.bind, None).await?;
     }
 
     Ok(())
