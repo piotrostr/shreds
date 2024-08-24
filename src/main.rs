@@ -76,7 +76,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         });
 
-        sleep_with_progress(30).await;
+        sleep_with_progress(20).await;
 
         pubsub_handle.abort();
         shreds_handle.abort();

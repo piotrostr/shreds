@@ -441,6 +441,7 @@ pub async fn process_entries_batch(
                     .expect("Failed to parse pubkey"),
             ) {
                 pools_state.raydium_amm_count += 1;
+                info!("shreds: {:?}", tx.signatures[0]);
                 sig_sender.send(tx.signatures[0].to_string()).await.unwrap();
                 // println!("Raydium AMM tx: {:?}", tx.signatures);
                 pools_state.reduce_raydium_amm_tx(Arc::new(tx)).await;
