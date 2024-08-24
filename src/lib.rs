@@ -1,4 +1,5 @@
 pub mod algo;
+pub mod benchmark;
 pub mod listener;
 pub mod processor;
 pub mod raydium;

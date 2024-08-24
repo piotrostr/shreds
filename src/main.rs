@@ -1,58 +1,63 @@
-use clap::{App, Arg};
+use clap::{command, Parser};
 use log::info;
-use shreds::listener;
+use shreds::algo::RAYDIUM_AMM;
 use shreds::raydium::download_raydium_json;
+use shreds::{benchmark, listener};
+
+#[derive(Parser)]
+#[command(name = "shreds", version = "1.0", author = "piotrostr")]
+struct Cli {
+    /// Sets the bind address
+    #[arg(
+        short,
+        long,
+        value_name = "ADDRESS",
+        default_value = "0.0.0.0:8001"
+    )]
+    bind: String,
+
+    /// Run in save mode (dump packets to file)
+    #[arg(short, long)]
+    save: bool,
+
+    /// Download Raydium JSON
+    #[arg(short, long)]
+    download: bool,
+
+    #[arg(long)]
+    pubsub: bool,
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv::dotenv().ok();
 
-    let matches = App::new("shreds")
-        .version("1.0")
-        .author("piotrostr")
-        .arg(
-            Arg::with_name("bind")
-                .short('b')
-                .long("bind")
-                .value_name("ADDRESS")
-                .help("Sets the bind address")
-                .takes_value(true)
-                .default_value("0.0.0.0:8001"),
-        )
-        .arg(
-            Arg::with_name("save")
-                .short('s')
-                .long("save")
-                .help("Run in save mode (dump packets to file)")
-                .takes_value(false),
-        )
-        .arg(
-            Arg::with_name("download")
-                .short('d')
-                .long("download")
-                .takes_value(false),
-        )
-        .get_matches();
+    let cli = Cli::parse();
 
     env_logger::Builder::default()
         .format_module_path(false)
         .filter_level(log::LevelFilter::Info)
+        .format_timestamp_millis()
         .init();
 
-    let bind_addr = matches.value_of("bind").unwrap();
-    info!("Binding to address: {}", bind_addr);
+    info!("Binding to address: {}", cli.bind);
 
-    if matches.is_present("download") {
+    if cli.download {
         download_raydium_json(true).await?;
         return Ok(());
     }
 
-    if matches.is_present("save") {
+    if cli.pubsub {
+        benchmark::listen_pubsub(vec![RAYDIUM_AMM.to_string()]).await?;
+        return Ok(());
+    }
+
+    if cli.save {
         info!("Running in save mode");
-        listener::run_listener_with_save(bind_addr).await?;
+        listener::run_listener_with_save(&cli.bind).await?;
     } else {
         info!("Running in algo mode");
-        listener::run_listener_with_algo(bind_addr).await?;
+        listener::run_listener_with_algo(&cli.bind).await?;
     }
 
     Ok(())

@@ -36,8 +36,6 @@ use raydium_library::amm::{self, openbook};
 pub const WHIRLPOOL: &str = "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc";
 pub const RAYDIUM_CP: &str = "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C";
 pub const RAYDIUM_AMM: &str = "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8";
-pub const RAYDIUM_LIQUIDITY_POOL_V4_PUBKEY: &str =
-    "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8";
 
 #[derive(Debug, Default)]
 pub struct PoolsState {
@@ -255,7 +253,7 @@ impl PoolsState {
 
             let new_price = calculate_price(&pool.state, &pool.decimals);
 
-            info!(
+            debug!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "event": "Swap",
@@ -353,8 +351,7 @@ pub async fn initialize_raydium_amm_pools(
         mints_of_interest.clone(),
     )
     .expect("parse raydium json");
-    let amm_program =
-        Pubkey::from_str(RAYDIUM_LIQUIDITY_POOL_V4_PUBKEY).expect("pubkey");
+    let amm_program = Pubkey::from_str(RAYDIUM_AMM).expect("pubkey");
     let payer = Keypair::read_from_file(env("FUND_KEYPAIR_PATH"))
         .expect("Failed to read keypair");
     let fee_payer = payer.pubkey();
@@ -440,6 +437,7 @@ pub async fn process_entries_batch(
                 &Pubkey::from_str(RAYDIUM_AMM)
                     .expect("Failed to parse pubkey"),
             ) {
+                info!("{:?}", tx.signatures);
                 pools_state.raydium_amm_count += 1;
                 // println!("Raydium AMM tx: {:?}", tx.signatures);
                 pools_state.reduce_raydium_amm_tx(Arc::new(tx)).await;
@@ -459,7 +457,8 @@ pub fn env(key: &str) -> String {
         panic!("{} env var not set", key);
     })
 }
-fn get_account_key_safely(
+
+pub fn get_account_key_safely(
     message: &VersionedMessage,
     instruction: &CompiledInstruction,
     account_index: usize,

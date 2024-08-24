@@ -6,7 +6,6 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.86"
 bincode = "1.3.3"
-clap = "3.2.23"
 env_logger = "0.11.5"
 log = "0.4.22"
 reed-solomon-erasure = "6.0.0"
@@ -28,3 +27,4 @@ reqwest = { version = "0.12.4", features = ["json", "stream"] }
 futures-util = "0.3.30"
 dotenv = "0.15.0"
 once_cell = "1.19.0"
+clap = { version = "4.5.13", features = ["derive"] }

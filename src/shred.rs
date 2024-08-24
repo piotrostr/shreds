@@ -152,7 +152,7 @@ pub fn debug_shred_sizes(raw_shreds: Vec<Vec<u8>>) {
     for shred in raw_shreds.iter() {
         *shred_sizes.entry(shred.len()).or_insert(0) += 1;
     }
-    info!("shred sizes {:?}", shred_sizes);
+    debug!("shred sizes {:?}", shred_sizes);
 }
 
 pub fn deshred(data_shreds: &[Shred]) -> Vec<u8> {
