@@ -124,7 +124,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         listener::run_listener_with_save(&cli.bind).await?;
     } else {
         info!("Running in algo mode");
-        listener::run_listener_with_algo(&cli.bind, None).await?;
+        listener::run_listener_with_algo(
+            &cli.bind,
+            Some(Arc::new(RwLock::new(vec![]))),
+        )
+        .await?;
     }
 
     Ok(())
