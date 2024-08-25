@@ -75,7 +75,7 @@ impl PoolsState {
                 match raydium::parse_amm_instruction(&instruction.data) {
                     Ok(parsed_instruction) => {
                         self.process_raydium_instruction(
-                            parsed_instruction,
+                            &parsed_instruction,
                             instruction,
                             &tx.message,
                             &tx.signatures[0],
@@ -96,7 +96,7 @@ impl PoolsState {
 
     async fn process_raydium_instruction(
         &mut self,
-        parsed_instruction: ParsedAmmInstruction,
+        parsed_instruction: &ParsedAmmInstruction,
         instruction: &CompiledInstruction,
         message: &VersionedMessage,
         signature: &Signature,
@@ -131,7 +131,7 @@ impl PoolsState {
         match parsed_instruction {
             ParsedAmmInstruction::SwapBaseOut(swap_instruction) => {
                 self.update_pool_state_swap(
-                    ParsedAccounts {
+                    &ParsedAccounts {
                         amm_id,
                         pool_coin_vault,
                         pool_pc_vault,
@@ -145,7 +145,7 @@ impl PoolsState {
             }
             ParsedAmmInstruction::SwapBaseIn(swap_instruction) => {
                 self.update_pool_state_swap(
-                    ParsedAccounts {
+                    &ParsedAccounts {
                         amm_id,
                         pool_coin_vault,
                         pool_pc_vault,
@@ -165,7 +165,7 @@ impl PoolsState {
     }
     async fn update_pool_state_swap(
         &mut self,
-        parsed_accounts: ParsedAccounts,
+        parsed_accounts: &ParsedAccounts,
         amount_specified: u64,
         other_amount_threshold: u64,
         is_swap_base_in: bool,

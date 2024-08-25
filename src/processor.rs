@@ -10,9 +10,8 @@ use solana_ledger::shred::{
 use solana_sdk::clock::Slot;
 
 use crate::shred::{
-    deserialize_entries, deshred, get_coding_shred_header,
-    get_expected_coding_shreds, get_fec_set_index, get_last_in_slot,
-    get_shred_index, is_shred_data, CodingShredHeader,
+    deserialize_entries, deshred, get_coding_shred_header, get_fec_set_index,
+    get_last_in_slot, get_shred_index, is_shred_data, CodingShredHeader,
 };
 
 pub const MAX_SHREDS_PER_SLOT: usize = 32_768 / 2;
@@ -37,7 +36,7 @@ pub struct Processor {
     uniqueness: HashSet<ShredId>,
     _handles: Vec<tokio::task::JoinHandle<()>>,
     entry_sender: mpsc::Sender<Vec<Entry>>,
-    error_sender: mpsc::Sender<String>,
+    _error_sender: mpsc::Sender<String>,
     success_sender: mpsc::Sender<FecSetSuccess>,
     success_receiver: mpsc::Receiver<FecSetSuccess>,
     total_collected_data: u128,
@@ -58,7 +57,7 @@ impl Processor {
             uniqueness: HashSet::new(),
             _handles: Vec::new(),
             entry_sender,
-            error_sender,
+            _error_sender: error_sender,
             total_collected_data: 0,
             total_processed_data: 0,
             total_collected_coding: 0,
@@ -137,109 +136,106 @@ impl Processor {
             let total_expected =
                 expected_data as usize + expected_coding as usize;
 
-            // We consider the set complete if:
-            // 1. We have all the expected data shreds, or
-            // 2. We have enough total shreds to reconstruct the missing data shreds
             fec_set.data_shreds.len() == expected_data as usize
                 || total_shreds >= total_expected
         } else {
-            // If we don't know the expected counts yet, we can't consider the set complete
             false
         }
     }
 
     async fn process_fec_set(&mut self, slot: Slot, fec_set_index: u32) {
-        if let Some(fec_set) = self.fec_sets.remove(&(slot, fec_set_index)) {
-            let mut all_shreds = fec_set
-                .data_shreds
+        let fec_set = match self.fec_sets.get(&(slot, fec_set_index)) {
+            Some(set) => set,
+            None => return,
+        };
+
+        let expected_data_shreds =
+            fec_set.num_expected_data.unwrap_or(1) as usize;
+        let mut data_shreds: Vec<Shred> = fec_set
+            .data_shreds
+            .values()
+            .filter_map(|raw_shred| {
+                Shred::new_from_serialized_shred(raw_shred.to_vec()).ok()
+            })
+            .collect();
+
+        if data_shreds.len() < expected_data_shreds {
+            let coding_shreds: Vec<Shred> = fec_set
+                .coding_shreds
                 .values()
-                .chain(fec_set.coding_shreds.values())
-                .cloned()
-                .collect::<Vec<Arc<Vec<u8>>>>();
-
-            let expected_data_shreds =
-                fec_set.num_expected_data.unwrap_or(0) as usize;
-            let actual_data_shreds = fec_set.data_shreds.len();
-
-            if actual_data_shreds < expected_data_shreds {
-                info!("Attempting to recover missing data shreds for slot {} FEC set {}", slot, fec_set_index);
-
-                match Shredder::try_recovery(
-                    all_shreds
-                        .iter()
-                        .map(|s| {
-                            Shred::new_from_serialized_shred(s.to_vec())
-                                .unwrap()
-                        })
-                        .collect(),
-                    &ReedSolomonCache::default(),
-                ) {
-                    Ok(recovered_shreds) => {
-                        info!(
-                            "Recovered {} data shreds for slot {} FEC set {}",
-                            recovered_shreds.len(),
-                            slot,
-                            fec_set_index
-                        );
-                        all_shreds.extend(
-                            recovered_shreds
-                                .into_iter()
-                                .map(|s| Arc::new(s.payload().to_vec())),
-                        );
-                    }
-                    Err(e) => {
-                        warn!("Failed to recover data shreds for slot {} FEC set {}: {:?}", 
-                          slot, fec_set_index, e);
-                    }
-                }
-            }
-
-            let mut data_shreds: Vec<Shred> = all_shreds
-                .into_iter()
                 .filter_map(|raw_shred| {
                     Shred::new_from_serialized_shred(raw_shred.to_vec()).ok()
                 })
-                .filter(|shred| shred.is_data())
                 .collect();
 
-            if data_shreds.is_empty() {
-                error!(
-                    "No valid data shreds found for slot {} FEC set {}",
-                    slot, fec_set_index
-                );
-                return;
-            }
-
-            data_shreds.sort_by_key(|shred| shred.index());
-
-            let deshredded_data = deshred(&data_shreds);
-            match deserialize_entries(&deshredded_data) {
-                Ok(entries) => {
-                    self.fec_set_success += 1;
-                    if let Err(e) = self.entry_sender.send(entries).await {
-                        error!("Failed to send entries for slot {} FEC set {}: {:?}", 
-                           slot, fec_set_index, e);
-                    } else {
-                        if let Err(e) = self
-                            .success_sender
-                            .send(FecSetSuccess {
-                                slot,
-                                fec_set_index,
-                            })
-                            .await
-                        {
-                            error!("Failed to send success for slot {} FEC set {}: {:?}", 
-                               slot, fec_set_index, e);
-                        }
-                        self.total_processed_data +=
-                            data_shreds.len() as u128;
-                    }
+            info!("Attempting to recover missing data shreds for slot {} FEC set {}", slot, fec_set_index);
+            match Shredder::try_recovery(
+                data_shreds
+                    .iter()
+                    .chain(coding_shreds.iter())
+                    .cloned()
+                    .collect(),
+                &ReedSolomonCache::default(),
+            ) {
+                Ok(recovered_shreds) => {
+                    info!(
+                        "Recovered {} data shreds for slot {} FEC set {}",
+                        recovered_shreds.len(),
+                        slot,
+                        fec_set_index
+                    );
+                    data_shreds.extend(
+                        recovered_shreds.into_iter().filter(|s| s.is_data()),
+                    );
                 }
                 Err(e) => {
-                    self.fec_set_failure += 1;
-                    error!("Failed to deserialize entries for slot {} FEC set {}: {:?}", 
-                       slot, fec_set_index, e);
+                    warn!("Failed to recover data shreds for slot {} FEC set {}: {:?}", 
+                    slot, fec_set_index, e);
                 }
+            }
+        }
+
+        if data_shreds.is_empty() {
+            error!(
+                "No valid data shreds found for slot {} FEC set {}",
+                slot, fec_set_index
+            );
+            return;
+        }
+
+        data_shreds.sort_by_key(|shred| shred.index());
+        let deshredded_data = deshred(&data_shreds);
+
+        match deserialize_entries(&deshredded_data) {
+            Ok(entries) => {
+                self.fec_set_success += 1;
+                if let Err(e) = self.entry_sender.send(entries).await {
+                    error!(
+                        "Failed to send entries for slot {} FEC set {}: {:?}",
+                        slot, fec_set_index, e
+                    );
+                    return;
+                }
+                if let Err(e) = self
+                    .success_sender
+                    .send(FecSetSuccess {
+                        slot,
+                        fec_set_index,
+                    })
+                    .await
+                {
+                    error!(
+                        "Failed to send success for slot {} FEC set {}: {:?}",
+                        slot, fec_set_index, e
+                    );
+                    return;
+                }
+                self.total_processed_data += data_shreds.len() as u128;
+            }
+            Err(e) => {
+                self.fec_set_failure += 1;
+                error!("Failed to deserialize entries for slot {} FEC set {}: {:?}", 
+                slot, fec_set_index, e);
             }
         }
     }
