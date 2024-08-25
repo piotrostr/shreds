@@ -8,7 +8,7 @@ use log::info;
 use shreds::algo::RAYDIUM_AMM;
 use shreds::benchmark::compare_results;
 use shreds::raydium::download_raydium_json;
-use shreds::{benchmark, listener};
+use shreds::{benchmark, listener, logger};
 use tokio::sync::RwLock;
 
 #[derive(Parser)]
@@ -41,14 +41,9 @@ struct Cli {
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv::dotenv().ok();
+    logger::setup()?;
 
     let cli = Cli::parse();
-
-    env_logger::Builder::default()
-        .format_module_path(false)
-        .filter_level(log::LevelFilter::Info)
-        .format_timestamp_millis()
-        .init();
 
     info!("Binding to address: {}", cli.bind);
 

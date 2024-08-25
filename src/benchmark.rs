@@ -52,8 +52,14 @@ pub fn compare_results(
         shreds_sigs_map.insert(sig.clone(), *timestamp);
     }
 
+    let mut average_diff = 0;
+    let mut count = 0;
+
     for (pubsub_timestamp, sig) in pubsub_sigs.iter() {
         if let Some(shreds_timestamp) = shreds_sigs_map.remove(sig) {
+            let diff = pubsub_timestamp - shreds_timestamp;
+            average_diff += diff;
+            count += 1;
             match shreds_timestamp.cmp(pubsub_timestamp) {
                 std::cmp::Ordering::Equal => {}
                 std::cmp::Ordering::Less => slower_count += 1,
@@ -64,10 +70,13 @@ pub fn compare_results(
         }
     }
 
+    average_diff /= count as u64;
+
     info!("Benchmark results:");
     info!("Pubsub sigs: {}", pubsub_sigs.len());
     info!("Shreds sigs: {}", shreds_sigs_map.len());
     info!("Miss count: {}", miss_count);
     info!("Slower count: {}", slower_count);
     info!("Faster count: {}", faster_count);
+    info!("Average diff: {}", average_diff);
 }
