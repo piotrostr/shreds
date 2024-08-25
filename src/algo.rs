@@ -1,4 +1,5 @@
 // TODOs
+// TODO can the shred_index possibly be wrong? maybe singature is better?
 // * in the algo, ensure that ATAs are already created, this saves some ixs
 // * take volume into account when calculating profit and best size (flash loans might be an
 //   option)
@@ -283,11 +284,11 @@ impl PoolsState {
 }
 
 pub async fn receive_entries(
+    pools_state: Arc<RwLock<PoolsState>>,
     mut entry_receiver: mpsc::Receiver<Vec<Entry>>,
     mut error_receiver: mpsc::Receiver<String>,
     sig_sender: Arc<mpsc::Sender<String>>,
 ) {
-    let mut pools_state = PoolsState::default();
     let mints_of_interest = [
         "3S8qX1MsMqRbiwKg2cQyx7nis1oHMgaCuc9c4VfvVdPN", // mother
         "3B5wuUrMEi5yATD7on46hKfej3pfmd7t1RKgrsN3pump", // billy
@@ -305,22 +306,26 @@ pub async fn receive_entries(
     // TODO use nice rpc, possibly geyser at later stage
     let rpc_client = RpcClient::new(env("RPC_URL").to_string());
 
+    let mut _pools_state = pools_state.write().await;
     initialize_raydium_amm_pools(
         &rpc_client,
-        &mut pools_state,
+        &mut _pools_state,
         mints_of_interest,
     )
     .await;
 
     println!(
         "Initialized Raydium AMM pools: {}",
-        pools_state.raydium_pools.len()
+        _pools_state.raydium_pools.len()
     );
+    drop(_pools_state);
 
+    let pools_state = pools_state.clone();
     tokio::spawn(async move {
         loop {
             tokio::select! {
                 Some(entries) = entry_receiver.recv() => {
+                    let mut pools_state = pools_state.write().await;
                     process_entries_batch(entries, &mut pools_state, sig_sender.clone()).await;
                 }
                 Some(error) = error_receiver.recv() => {

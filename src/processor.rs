@@ -1,4 +1,4 @@
-use log::{debug, error, info, trace};
+use log::{error, info, warn};
 use solana_entry::entry::Entry;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -8,32 +8,31 @@ use solana_ledger::shred::{layout, Shred, ShredId};
 use solana_sdk::clock::Slot;
 
 use crate::shred::{
-    deserialize_entries, deshred, get_shred_data_flags, get_shred_index,
+    deserialize_entries, deshred, get_coding_shred_header, get_fec_set_index,
+    get_last_in_slot, get_shred_index, is_shred_data, CodingShredHeader,
 };
-use crate::structs::ShredVariant;
 
 pub const MAX_SHREDS_PER_SLOT: usize = 32_768 / 2;
 
 struct BatchSuccess {
     slot: Slot,
-    batch_tick: u8,
+    fec_set_index: u32,
 }
 
-/// the shreds should probably be stored in a more efficient way, something like a BTreeMap
-/// probably
 #[derive(Debug)]
-struct BatchInfo {
-    shreds: HashMap<u32, Arc<Vec<u8>>>,
-    highest_index: u32,
-    lowest_index: u32,
-    is_last_shred: bool,
+struct FecSet {
+    data_shreds: HashMap<u32, Arc<Vec<u8>>>,
+    coding_shreds: HashMap<u32, Arc<Vec<u8>>>,
+    num_expected_data: Option<u16>,
+    num_expected_coding: Option<u16>,
+    is_last_in_slot: bool,
 }
 
 #[derive(Debug)]
 pub struct Processor {
-    data_shreds: HashMap<Slot, HashMap<u8, BatchInfo>>,
+    fec_sets: HashMap<(Slot, u32), FecSet>, // (slot, fec_set_index) -> FecSet
     uniqueness: HashSet<ShredId>,
-    handles: Vec<tokio::task::JoinHandle<()>>,
+    _handles: Vec<tokio::task::JoinHandle<()>>,
     entry_sender: mpsc::Sender<Vec<Entry>>,
     error_sender: mpsc::Sender<String>,
     success_sender: mpsc::Sender<BatchSuccess>,
@@ -49,9 +48,9 @@ impl Processor {
     ) -> Self {
         let (success_sender, success_receiver) = mpsc::channel(2000);
         Processor {
-            data_shreds: HashMap::new(),
+            fec_sets: HashMap::new(),
             uniqueness: HashSet::new(),
-            handles: Vec::new(),
+            _handles: Vec::new(),
             entry_sender,
             error_sender,
             total_collected: 0,
@@ -61,134 +60,143 @@ impl Processor {
         }
     }
 
-    // TODO this is used now, might be blocking
-    // I removed the cleanup as last step after sending batch, since I assumed that the batch
-    // might be incomplete if say the first shred is missing but the order is OK
-    // this is blocking, cannot be moved unfortunately
-    // a solution with pending batches might be better, if this could be spawned
-    // to listen for the channel messages in another thread, itd also be dandy
     pub async fn cleanup_processed_batches(&mut self) {
         while let Ok(success) = self.success_receiver.try_recv() {
-            // A batch was successfully processed
-            let v = self
-                .data_shreds
-                .get_mut(&success.slot)
-                .and_then(|slot_map| slot_map.remove(&success.batch_tick));
-            if let Some(batch_info) = v {
+            let key = (success.slot, success.fec_set_index);
+            if let Some(fec_set) = self.fec_sets.remove(&key) {
                 info!(
-                    "Slot {} Batch {} processed successfully",
-                    success.slot, success.batch_tick
+                    "Slot {} FEC set {} processed successfully",
+                    success.slot, success.fec_set_index
                 );
-                self.total_processed += batch_info.shreds.len() as u128;
-            };
-        }
-    }
-
-    pub async fn insert(&mut self, slot: Slot, raw_shred: Arc<Vec<u8>>) {
-        let variant_raw = raw_shred.get(0x40).expect("grab variant");
-        let variant =
-            ShredVariant::try_from(*variant_raw).expect("parse variant");
-        let is_code = matches!(variant, ShredVariant::MerkleCode { .. })
-            || matches!(variant, ShredVariant::LegacyCode { .. });
-        let shred_index =
-            get_shred_index(&raw_shred).expect("get index") as u32;
-        let (block_complete, batch_complete, batch_tick) =
-            get_shred_data_flags(&raw_shred);
-
-        if !is_code {
-            self.total_collected += 1;
-            let batch_info = self
-                .data_shreds
-                .entry(slot)
-                .or_default()
-                .entry(batch_tick)
-                .or_insert_with(|| BatchInfo {
-                    shreds: HashMap::new(),
-                    highest_index: 0,
-                    lowest_index: u32::MAX,
-                    is_last_shred: false,
-                });
-
-            batch_info.shreds.insert(shred_index, raw_shred);
-            batch_info.highest_index =
-                batch_info.highest_index.max(shred_index);
-            batch_info.lowest_index =
-                batch_info.lowest_index.min(shred_index);
-
-            if batch_complete || block_complete {
-                batch_info.is_last_shred = true;
-                self.process_batch(slot, batch_tick).await;
+                self.total_processed += fec_set.data_shreds.len() as u128
+                    + fec_set.coding_shreds.len() as u128;
             }
         }
     }
 
-    async fn process_batch(&mut self, slot: Slot, batch_tick: u8) {
-        if let Some(slot_map) = self.data_shreds.get_mut(&slot) {
-            if let Some(batch_info) = slot_map.get_mut(&batch_tick) {
-                if batch_info.is_last_shred && is_batch_ready(batch_info) {
-                    trace!("Sending Slot {} Batch {}", slot, batch_tick);
-                    let batch_shreds = std::mem::take(&mut batch_info.shreds);
-                    let entry_sender = self.entry_sender.clone();
-                    let error_sender = self.error_sender.clone();
-                    let success_sender = self.success_sender.clone();
-                    let handle = tokio::spawn(async move {
-                        let raw_shreds =
-                            batch_shreds.into_values().collect::<Vec<_>>();
-                        let total = raw_shreds.len();
-                        let _raw_shreds = raw_shreds.clone();
-                        match handle_batch(raw_shreds).await {
-                            Ok(entries) => {
-                                if let Err(e) = success_sender
-                                    .send(BatchSuccess { slot, batch_tick })
-                                    .await
-                                {
-                                    error!("Failed to send entries: {:?}", e);
-                                }
-                                if let Err(e) =
-                                    entry_sender.send(entries).await
-                                {
-                                    error!("Failed to send entries: {:?}", e);
-                                }
-                            }
-                            Err(e) => {
-                                _raw_shreds
-                                    .iter()
-                                    .map(|s| {
-                                        Shred::new_from_serialized_shred(
-                                            s.to_vec(),
-                                        )
-                                        .unwrap()
-                                    })
-                                    .for_each(|s| {
-                                        println!(
-                                            "{} {} {} {} {}",
-                                            s.slot(),
-                                            s.index(),
-                                            s.is_data(),
-                                            s.last_in_slot(),
-                                            s.data_complete()
-                                        );
-                                    });
+    pub async fn insert(&mut self, slot: Slot, raw_shred: Arc<Vec<u8>>) {
+        let is_data = is_shred_data(&raw_shred);
+        let index = get_shred_index(&raw_shred).expect("get index");
+        let fec_set_index =
+            get_fec_set_index(&raw_shred).expect("get fec set index");
 
-                                if let Err(e) = error_sender
-                                    .send(format!(
-                                        "{}-{} total: {} {:?}",
-                                        slot, total, batch_tick, e,
-                                    ))
-                                    .await
-                                {
-                                    error!("Failed to send error: {:?}", e);
-                                }
-                            }
-                        }
-                    });
-                    self.handles.push(handle);
-                } else {
-                    trace!(
-                        "Slot {} Batch {} is not ready for processing",
-                        slot,
-                        batch_tick
+        self.total_collected += 1;
+
+        let fec_set = self
+            .fec_sets
+            .entry((slot, fec_set_index))
+            .or_insert_with(|| FecSet {
+                data_shreds: HashMap::new(),
+                coding_shreds: HashMap::new(),
+                num_expected_data: None,
+                num_expected_coding: None,
+                is_last_in_slot: false,
+            });
+
+        if is_data {
+            fec_set.data_shreds.insert(index, raw_shred.clone());
+            fec_set.is_last_in_slot |= get_last_in_slot(&raw_shred);
+        } else {
+            fec_set.coding_shreds.insert(index, raw_shred.clone());
+            // Update expected counts from coding shred
+            if fec_set.num_expected_data.is_none()
+                || fec_set.num_expected_coding.is_none()
+            {
+                if let Ok(CodingShredHeader {
+                    num_data_shreds,
+                    num_coding_shreds,
+                    ..
+                }) = get_coding_shred_header(&raw_shred)
+                {
+                    fec_set.num_expected_data = Some(num_data_shreds);
+                    fec_set.num_expected_coding = Some(num_coding_shreds);
+                }
+            }
+        }
+
+        if Self::is_fec_set_complete(fec_set) {
+            self.process_fec_set(slot, fec_set_index).await;
+        }
+    }
+
+    fn is_fec_set_complete(fec_set: &FecSet) -> bool {
+        if let (Some(expected_data), Some(expected_coding)) =
+            (fec_set.num_expected_data, fec_set.num_expected_coding)
+        {
+            let total_shreds =
+                fec_set.data_shreds.len() + fec_set.coding_shreds.len();
+            let total_expected =
+                expected_data as usize + expected_coding as usize;
+
+            // We consider the set complete if:
+            // 1. We have all the expected data shreds, or
+            // 2. We have enough total shreds to reconstruct the missing data shreds
+            fec_set.data_shreds.len() == expected_data as usize
+                || total_shreds >= total_expected
+        } else {
+            // If we don't know the expected counts yet, we can't consider the set complete
+            false
+        }
+    }
+
+    async fn process_fec_set(&mut self, slot: Slot, fec_set_index: u32) {
+        if let Some(fec_set) = self.fec_sets.remove(&(slot, fec_set_index)) {
+            let mut shreds: Vec<Shred> = fec_set
+                .data_shreds
+                .values()
+                .map(|raw_shred| {
+                    Shred::new_from_serialized_shred(raw_shred.to_vec())
+                        .unwrap()
+                })
+                .collect();
+
+            // If we're missing data shreds, we should attempt to reconstruct them here
+            // using the coding shreds. For now, we'll just log a warning.
+            if let Some(expected_data) = fec_set.num_expected_data {
+                if shreds.len() < expected_data as usize {
+                    warn!(
+                        "Missing {} data shreds in FEC set {}",
+                        expected_data as usize - shreds.len(),
+                        fec_set_index
                     );
+                    // TODO: Implement reconstruction of missing data shreds
+                }
+            }
+
+            shreds.sort_by_key(|shred| shred.index());
+
+            let deshredded_data = deshred(&shreds);
+            match deserialize_entries(&deshredded_data) {
+                Ok(entries) => {
+                    if let Err(e) = self.entry_sender.send(entries).await {
+                        error!("Failed to send entries: {:?}", e);
+                    }
+                    if let Err(e) = self
+                        .success_sender
+                        .send(BatchSuccess {
+                            slot,
+                            fec_set_index,
+                        })
+                        .await
+                    {
+                        error!("Failed to send success: {:?}", e);
+                    }
+                }
+                Err(e) => {
+                    if let Err(e) = self
+                        .error_sender
+                        .send(format!(
+                            "{}-{} total: {} {:?}",
+                            slot,
+                            fec_set.data_shreds.len()
+                                + fec_set.coding_shreds.len(),
+                            fec_set_index,
+                            e,
+                        ))
+                        .await
+                    {
+                        error!("Failed to send error: {:?}", e);
+                    }
                 }
             }
         }
@@ -212,59 +220,12 @@ impl Processor {
     }
 }
 
-fn is_batch_ready(batch_info: &BatchInfo) -> bool {
-    if !batch_info.is_last_shred {
-        return false;
-    }
-
-    let expected_count =
-        batch_info.highest_index - batch_info.lowest_index + 1;
-    batch_info.shreds.len() as u32 >= expected_count
-}
-
-pub async fn handle_batch(
-    raw_shreds: Vec<Arc<Vec<u8>>>,
-) -> Result<Vec<Entry>, Box<dyn std::error::Error + Send + Sync>> {
-    debug!("Processing batch with {} shreds", raw_shreds.len());
-
-    // only copy the data when already in a new thread
-    let mut shreds = raw_shreds
-        .into_iter()
-        .map(|raw_shred| {
-            Shred::new_from_serialized_shred(raw_shred.to_vec()).unwrap()
-        })
-        .collect::<Vec<_>>();
-
-    shreds.sort_by_key(|shred| shred.index());
-
-    assert!(!shreds.is_empty());
-    assert!(shreds.iter().all(|shred| shred.is_data()));
-
-    // Check if batch complete
-    let last = shreds.last().expect("last shred");
-    if !last.data_complete() && !last.last_in_slot() {
-        return Err("Batch is not complete".into());
-    };
-
-    // Process shreds
-    let deshredded_data = deshred(&shreds);
-    debug!("Deshredded data size: {}", deshredded_data.len());
-    match deserialize_entries(&deshredded_data) {
-        Ok(entries) => {
-            debug!("Successfully deserialized {} entries", entries.len());
-            Ok(entries)
-        }
-        Err(e) => Err(e),
-    }
-}
-
 #[cfg(test)]
 mod tests {
-
-    use log::info;
-
     use super::*;
-    use crate::algo;
+    use crate::algo::{self, PoolsState};
+    use log::info;
+    use tokio::sync::RwLock;
 
     #[tokio::test]
     async fn processor_works() {
@@ -284,7 +245,6 @@ mod tests {
         let (sig_sender, mut sig_receiver) = mpsc::channel(2000);
 
         tokio::spawn(async move {
-            // gotta clean up the channel, more than 2k txs drop
             while let Some(sig) = sig_receiver.recv().await {
                 let timestamp = chrono::Utc::now().timestamp_millis();
                 info!("shreds: {} {}", timestamp, sig);
@@ -296,14 +256,17 @@ mod tests {
             processor.collect(Arc::new(raw_shred)).await;
         }
 
+        let pools_state = Arc::new(RwLock::new(PoolsState::default()));
+
         algo::receive_entries(
+            pools_state.clone(),
             entry_receiver,
             error_receiver,
             Arc::new(sig_sender),
         )
         .await;
 
-        for handle in processor.handles.drain(..) {
+        for handle in processor._handles.drain(..) {
             handle.await.expect("Failed to process batch");
         }
 
@@ -312,17 +275,25 @@ mod tests {
 
         info!("Total collected: {}", processor.total_collected);
         info!("Total processed: {}", processor.total_processed);
-        processor.data_shreds.iter().for_each(|(_, batches)| {
-            batches.iter().for_each(|(tick, batch_info)| {
-                info!(
-                    "batch {} l: {} h: {} {} with {}",
-                    tick,
-                    batch_info.lowest_index,
-                    batch_info.highest_index,
-                    batch_info.is_last_shred,
-                    batch_info.shreds.len()
-                )
-            })
+        processor.fec_sets.iter().for_each(|((slot, fec_set_index), fec_set)| {
+            info!(
+                "Slot {} FEC set {} - Data: {}/{:?}, Coding: {}/{:?}, Last in slot: {}",
+                slot,
+                fec_set_index,
+                fec_set.data_shreds.len(),
+                fec_set.num_expected_data,
+                fec_set.coding_shreds.len(),
+                fec_set.num_expected_coding,
+                fec_set.is_last_in_slot
+            )
         });
+
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
+        let pools_state = pools_state.read().await;
+        info!(
+            "Pools state: orca txs: {} raydium txs: {}",
+            pools_state.orca_count, pools_state.raydium_amm_count,
+        );
     }
 }

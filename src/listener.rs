@@ -3,10 +3,10 @@ use std::io::Write;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::signal;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 use tokio::time::{sleep, Duration};
 
-use crate::algo;
+use crate::algo::{self, PoolsState};
 use crate::benchmark::Sigs;
 use crate::processor::Processor;
 
@@ -71,7 +71,9 @@ pub async fn run_listener_with_algo(
     });
 
     tokio::spawn(async move {
+        let pools_state = Arc::new(RwLock::new(PoolsState::default()));
         algo::receive_entries(
+            pools_state.clone(),
             entry_receiver,
             error_receiver,
             Arc::new(sig_sender),
