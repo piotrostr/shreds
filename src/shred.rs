@@ -8,6 +8,62 @@ use solana_entry::entry::Entry;
 use solana_ledger::shred::{Error, Shred};
 use solana_sdk::signature::SIGNATURE_BYTES;
 
+pub fn get_shred_variant(shred: &[u8]) -> Result<ShredVariant, Error> {
+    let Some(&shred_variant) = shred.get(OFFSET_OF_SHRED_VARIANT) else {
+        return Err(Error::InvalidPayloadSize(shred.len()));
+    };
+    ShredVariant::try_from(shred_variant)
+        .map_err(|_| Error::InvalidShredVariant)
+}
+
+pub fn is_shred_data(raw_shred: &[u8]) -> bool {
+    matches!(
+        get_shred_variant(raw_shred),
+        Ok(ShredVariant::LegacyData) | Ok(ShredVariant::MerkleData { .. })
+    )
+}
+
+pub fn get_fec_set_index(
+    raw_shred: &[u8],
+) -> Result<u32, Box<dyn std::error::Error>> {
+    Ok(u32::from_le_bytes(raw_shred[0x4f..0x4f + 4].try_into()?))
+}
+
+pub fn get_last_in_slot(raw_shred: &[u8]) -> bool {
+    if is_shred_data(raw_shred) {
+        let flags = raw_shred[0x55];
+        ShredFlags::from_bits(flags)
+            .map(|f| f.contains(ShredFlags::LAST_SHRED_IN_SLOT))
+            .unwrap_or(false)
+    } else {
+        false
+    }
+}
+
+pub struct CodingShredHeader {
+    pub num_data_shreds: u16,
+    pub num_coding_shreds: u16,
+    pub position: u16,
+}
+
+pub fn get_coding_shred_header(
+    raw_shred: &[u8],
+) -> Result<CodingShredHeader, Box<dyn std::error::Error>> {
+    if is_shred_data(raw_shred) {
+        return Err("Not a coding shred".into());
+    }
+
+    Ok(CodingShredHeader {
+        num_data_shreds: u16::from_le_bytes(
+            raw_shred[0x53..0x55].try_into()?,
+        ),
+        num_coding_shreds: u16::from_le_bytes(
+            raw_shred[0x55..0x57].try_into()?,
+        ),
+        position: u16::from_le_bytes(raw_shred[0x57..0x59].try_into()?),
+    })
+}
+
 pub fn get_shred_debug_string(shred: Shred) -> String {
     let (block_complete, batch_complete, batch_tick) =
         get_shred_data_flags(shred.payload());
@@ -35,14 +91,6 @@ pub fn debug_shred(shred: Shred) {
         shred.payload().iter().filter(|&&b| b == 0).count(),
         get_shred_variant(shred.payload()).expect("shred variant"),
     );
-}
-
-pub fn get_shred_variant(shred: &[u8]) -> Result<ShredVariant, Error> {
-    let Some(&shred_variant) = shred.get(OFFSET_OF_SHRED_VARIANT) else {
-        return Err(Error::InvalidPayloadSize(shred.len()));
-    };
-    ShredVariant::try_from(shred_variant)
-        .map_err(|_| Error::InvalidShredVariant)
 }
 
 pub fn deserialize_shred(data: Vec<u8>) -> Result<Shred, Error> {
