@@ -1,13 +1,13 @@
 // TODOs
-// 1) in the algo, ensure that ATAs are already created, this saves some ixs
-// 2) validate the pool update is correct
-// 3) implement calculate amount out for a given amount for both pools for profit search
-// 4) take volume into account when calculating profit and best size (flash loans might be an
-//    option)
-//  * there might be missing data, there has to be a constant stream for resolving
-//  * the pool calculation has to involve the slippage and the exact amount that someone is to
-//  receive, it should amount to the right amount per slot since the transactions are in the
-//  ordering as accepted per validator, so just by calculating the price it should work
+// * in the algo, ensure that ATAs are already created, this saves some ixs
+// * take volume into account when calculating profit and best size (flash loans might be an
+//   option)
+// * there is missing data, likely due to an error somewhere, could be the coding shreds that are
+// to be used
+// * it might be useful to receive a single data tick and inspect on how the shreds are forwarded
+// technically, shreds could be used to maintain ledger altogether, the only thing that is needed
+// * pool calculation might be a bit off, this is to verify when putting txs together
+// * orca is yet to be implememnted, this is to be done after raydium is working
 use futures_util::future::join_all;
 use once_cell::sync::Lazy;
 use serde_json::Value;
