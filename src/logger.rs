@@ -3,10 +3,8 @@ use std::io::Read;
 
 pub fn setup() -> Result<(), Box<dyn std::error::Error>> {
     let random = grab_random_bytes();
-    let log_file = File::create(format!(
-        "shreds-{}.log",
-        String::from_utf8(random.to_vec()).unwrap()
-    ))?;
+    let log_file =
+        File::create(format!("shreds-{}.log", hex::encode(random)))?;
     env_logger::Builder::default()
         .format_module_path(false)
         .filter_level(log::LevelFilter::Info)

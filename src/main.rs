@@ -45,8 +45,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let cli = Cli::parse();
 
-    info!("Binding to address: {}", cli.bind);
-
     if cli.download {
         download_raydium_json(true).await?;
         return Ok(());
@@ -78,6 +76,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if cli.benchmark {
+        info!("Binding to address: {}", cli.bind);
+
         let pubsub_sigs = Arc::new(RwLock::new(Vec::new()));
         let shreds_sigs = Arc::new(RwLock::new(Vec::new()));
 
@@ -115,9 +115,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         return Ok(());
     } else if cli.save {
+        info!("Binding to address: {}", cli.bind);
+
         info!("Running in save mode");
         listener::run_listener_with_save(&cli.bind).await?;
     } else {
+        info!("Binding to address: {}", cli.bind);
+
         info!("Running in algo mode");
         listener::run_listener_with_algo(
             &cli.bind,
