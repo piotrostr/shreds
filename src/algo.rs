@@ -1,5 +1,4 @@
 // TODOs
-// TODO can the shred_index possibly be wrong? maybe singature is better?
 // * in the algo, ensure that ATAs are already created, this saves some ixs
 // * take volume into account when calculating profit and best size (flash loans might be an
 //   option)

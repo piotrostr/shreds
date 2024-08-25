@@ -1,20 +1,23 @@
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use solana_entry::entry::Entry;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
-use solana_ledger::shred::{layout, Shred, ShredId};
+use solana_ledger::shred::{
+    layout, ReedSolomonCache, Shred, ShredId, Shredder,
+};
 use solana_sdk::clock::Slot;
 
 use crate::shred::{
-    deserialize_entries, deshred, get_coding_shred_header, get_fec_set_index,
-    get_last_in_slot, get_shred_index, is_shred_data, CodingShredHeader,
+    deserialize_entries, deshred, get_coding_shred_header,
+    get_expected_coding_shreds, get_fec_set_index, get_last_in_slot,
+    get_shred_index, is_shred_data, CodingShredHeader,
 };
 
 pub const MAX_SHREDS_PER_SLOT: usize = 32_768 / 2;
 
-struct BatchSuccess {
+struct FecSetSuccess {
     slot: Slot,
     fec_set_index: u32,
 }
@@ -35,10 +38,11 @@ pub struct Processor {
     _handles: Vec<tokio::task::JoinHandle<()>>,
     entry_sender: mpsc::Sender<Vec<Entry>>,
     error_sender: mpsc::Sender<String>,
-    success_sender: mpsc::Sender<BatchSuccess>,
-    success_receiver: mpsc::Receiver<BatchSuccess>,
-    total_collected: u128,
-    total_processed: u128,
+    success_sender: mpsc::Sender<FecSetSuccess>,
+    success_receiver: mpsc::Receiver<FecSetSuccess>,
+    total_collected_data: u128,
+    total_processed_data: u128,
+    total_collected_coding: u128,
 }
 
 impl Processor {
@@ -53,8 +57,9 @@ impl Processor {
             _handles: Vec::new(),
             entry_sender,
             error_sender,
-            total_collected: 0,
-            total_processed: 0,
+            total_collected_data: 0,
+            total_processed_data: 0,
+            total_collected_coding: 0,
             success_sender,
             success_receiver,
         }
@@ -64,12 +69,12 @@ impl Processor {
         while let Ok(success) = self.success_receiver.try_recv() {
             let key = (success.slot, success.fec_set_index);
             if let Some(fec_set) = self.fec_sets.remove(&key) {
-                info!(
+                debug!(
                     "Slot {} FEC set {} processed successfully",
                     success.slot, success.fec_set_index
                 );
-                self.total_processed += fec_set.data_shreds.len() as u128
-                    + fec_set.coding_shreds.len() as u128;
+                self.total_processed_data +=
+                    fec_set.data_shreds.len() as u128;
             }
         }
     }
@@ -79,8 +84,6 @@ impl Processor {
         let index = get_shred_index(&raw_shred).expect("get index");
         let fec_set_index =
             get_fec_set_index(&raw_shred).expect("get fec set index");
-
-        self.total_collected += 1;
 
         let fec_set = self
             .fec_sets
@@ -94,9 +97,11 @@ impl Processor {
             });
 
         if is_data {
+            self.total_collected_data += 1;
             fec_set.data_shreds.insert(index, raw_shred.clone());
             fec_set.is_last_in_slot |= get_last_in_slot(&raw_shred);
         } else {
+            self.total_collected_coding += 1;
             fec_set.coding_shreds.insert(index, raw_shred.clone());
             // Update expected counts from coding shred
             if fec_set.num_expected_data.is_none()
@@ -140,8 +145,8 @@ impl Processor {
     }
 
     async fn process_fec_set(&mut self, slot: Slot, fec_set_index: u32) {
-        if let Some(fec_set) = self.fec_sets.remove(&(slot, fec_set_index)) {
-            let mut shreds: Vec<Shred> = fec_set
+        if let Some(fec_set) = self.fec_sets.get(&(slot, fec_set_index)) {
+            let data_shreds: Vec<Shred> = fec_set
                 .data_shreds
                 .values()
                 .map(|raw_shred| {
@@ -152,20 +157,65 @@ impl Processor {
 
             // If we're missing data shreds, we should attempt to reconstruct them here
             // using the coding shreds. For now, we'll just log a warning.
+            let mut data_shreds =
+                if let Some(expected_data) = fec_set.num_expected_data {
+                    if data_shreds.len() < expected_data as usize {
+                        warn!(
+                            "Missing {} data shreds in FEC set {}",
+                            expected_data as usize - data_shreds.len(),
+                            fec_set_index
+                        );
+                        let coding_shreds: Vec<Shred> = fec_set
+                            .coding_shreds
+                            .values()
+                            .map(|raw_shred| {
+                                Shred::new_from_serialized_shred(
+                                    raw_shred.to_vec(),
+                                )
+                                .unwrap()
+                            })
+                            .collect();
+                        match Shredder::try_recovery(
+                            data_shreds
+                                .iter()
+                                .chain(coding_shreds.iter())
+                                .cloned()
+                                .collect::<Vec<_>>(),
+                            &ReedSolomonCache::default(),
+                        ) {
+                            Ok(recovered_shreds) => {
+                                info!(
+                                    "Recovered {} data shreds in FEC set {}",
+                                    recovered_shreds.len(),
+                                    fec_set_index
+                                );
+                                recovered_shreds
+                            }
+                            Err(e) => {
+                                error!("Failed to repair shreds: {}", e);
+                                data_shreds
+                            }
+                        }
+                    } else {
+                        data_shreds
+                    }
+                } else {
+                    data_shreds
+                };
+
             if let Some(expected_data) = fec_set.num_expected_data {
-                if shreds.len() < expected_data as usize {
-                    warn!(
-                        "Missing {} data shreds in FEC set {}",
-                        expected_data as usize - shreds.len(),
-                        fec_set_index
+                if data_shreds.len() < expected_data as usize {
+                    error!(
+                        "Failed to recover data shreds for slot {} FEC set {}",
+                        slot, fec_set_index
                     );
-                    // TODO: Implement reconstruction of missing data shreds
+                    return;
                 }
             }
 
-            shreds.sort_by_key(|shred| shred.index());
+            data_shreds.sort_by_key(|shred| shred.index());
 
-            let deshredded_data = deshred(&shreds);
+            let deshredded_data = deshred(&data_shreds);
             match deserialize_entries(&deshredded_data) {
                 Ok(entries) => {
                     if let Err(e) = self.entry_sender.send(entries).await {
@@ -173,7 +223,7 @@ impl Processor {
                     }
                     if let Err(e) = self
                         .success_sender
-                        .send(BatchSuccess {
+                        .send(FecSetSuccess {
                             slot,
                             fec_set_index,
                         })
@@ -247,7 +297,7 @@ mod tests {
         tokio::spawn(async move {
             while let Some(sig) = sig_receiver.recv().await {
                 let timestamp = chrono::Utc::now().timestamp_millis();
-                info!("shreds: {} {}", timestamp, sig);
+                debug!("shreds: {} {}", timestamp, sig);
             }
         });
 
@@ -273,8 +323,12 @@ mod tests {
         info!("Cleaning up processed batches");
         processor.cleanup_processed_batches().await;
 
-        info!("Total collected: {}", processor.total_collected);
-        info!("Total processed: {}", processor.total_processed);
+        info!("Total collected data: {}", processor.total_collected_data);
+        info!(
+            "Total collected coding: {}",
+            processor.total_collected_coding
+        );
+        info!("Total processed (data): {}", processor.total_processed_data);
         processor.fec_sets.iter().for_each(|((slot, fec_set_index), fec_set)| {
             info!(
                 "Slot {} FEC set {} - Data: {}/{:?}, Coding: {}/{:?}, Last in slot: {}",

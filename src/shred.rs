@@ -332,6 +332,45 @@ pub fn get_shred_data_flags(raw_shred: &[u8]) -> (bool, bool, u8) {
     (block_complete, batch_complete, batch_tick)
 }
 
+pub fn get_expected_coding_shreds(n: usize) -> usize {
+    match n {
+        1 => 17,
+        2 => 18,
+        3 => 19,
+        4 => 19,
+        5 => 20,
+        6 => 21,
+        7 => 21,
+        8 => 22,
+        9 => 23,
+        10 => 23,
+        11 => 24,
+        12 => 24,
+        13 => 25,
+        14 => 25,
+        15 => 26,
+        16 => 26,
+        17 => 26,
+        18 => 27,
+        19 => 27,
+        20 => 28,
+        21 => 28,
+        22 => 29,
+        23 => 29,
+        24 => 29,
+        25 => 30,
+        26 => 30,
+        27 => 31,
+        28 => 31,
+        29 => 31,
+        30 => 32,
+        31 => 32,
+        32 => 32,
+        n if n > 32 && n <= 67 => n,
+        _ => 0, // Invalid case
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
