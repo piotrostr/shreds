@@ -74,7 +74,7 @@ pub fn compare_results(
 
     info!("Benchmark results:");
     info!("Pubsub sigs: {}", pubsub_sigs.len());
-    info!("Shreds sigs: {}", shreds_sigs_map.len());
+    info!("Shreds sigs: {}", shreds_sigs.len());
     info!("Miss count: {}", miss_count);
     info!("Slower count: {}", slower_count);
     info!("Faster count: {}", faster_count);
