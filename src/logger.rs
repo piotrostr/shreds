@@ -3,13 +3,12 @@ use std::io::Read;
 
 pub fn setup() -> Result<(), Box<dyn std::error::Error>> {
     let random = grab_random_bytes();
-    let log_file =
-        File::create(format!("shreds-{}.log", hex::encode(random)))?;
+    let log_file = File::create(format!("logs/{}.log", hex::encode(random)))?;
+    println!("Logging to: {:?}", log_file);
     env_logger::Builder::default()
         .format_module_path(false)
         .filter_level(log::LevelFilter::Info)
         .format_timestamp_millis()
-        .target(env_logger::Target::Stdout)
         .target(env_logger::Target::Pipe(Box::new(log_file)))
         .init();
 

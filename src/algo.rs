@@ -313,7 +313,7 @@ pub async fn receive_entries(
     )
     .await;
 
-    println!(
+    info!(
         "Initialized Raydium AMM pools: {}",
         _pools_state.raydium_pools.len()
     );
