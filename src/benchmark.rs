@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::ops::Div;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -58,6 +59,7 @@ pub fn compare_results(
     for (pubsub_timestamp, sig) in pubsub_sigs.iter() {
         if let Some(shreds_timestamp) = shreds_sigs_map.remove(sig) {
             let diff = shreds_timestamp - pubsub_timestamp;
+            info!("diff: {} {}", sig, diff);
             average_diff += diff as f64;
             count += 1;
             match shreds_timestamp.cmp(pubsub_timestamp) {
@@ -70,13 +72,11 @@ pub fn compare_results(
         }
     }
 
-    average_diff /= count as f64;
-
     info!("Benchmark results:");
     info!("Pubsub sigs: {}", pubsub_sigs.len());
     info!("Shreds sigs: {}", shreds_sigs.len());
     info!("Miss count: {}", miss_count);
     info!("Slower count: {}", slower_count);
     info!("Faster count: {}", faster_count);
-    info!("Average diff: {}", average_diff);
+    info!("Average diff: {}", average_diff.div(count as f64));
 }
