@@ -52,25 +52,25 @@ pub fn compare_results(
         shreds_sigs_map.insert(sig.clone(), *timestamp);
     }
 
-    let mut average_diff = 0;
+    let mut average_diff = 0f64;
     let mut count = 0;
 
     for (pubsub_timestamp, sig) in pubsub_sigs.iter() {
         if let Some(shreds_timestamp) = shreds_sigs_map.remove(sig) {
-            let diff = pubsub_timestamp - shreds_timestamp;
-            average_diff += diff;
+            let diff = shreds_timestamp - pubsub_timestamp;
+            average_diff += diff as f64;
             count += 1;
             match shreds_timestamp.cmp(pubsub_timestamp) {
                 std::cmp::Ordering::Equal => {}
-                std::cmp::Ordering::Less => slower_count += 1,
-                std::cmp::Ordering::Greater => faster_count += 1,
+                std::cmp::Ordering::Less => faster_count += 1,
+                std::cmp::Ordering::Greater => slower_count += 1,
             }
         } else {
             miss_count += 1;
         }
     }
 
-    average_diff /= count as u64;
+    average_diff /= count as f64;
 
     info!("Benchmark results:");
     info!("Pubsub sigs: {}", pubsub_sigs.len());
