@@ -165,6 +165,8 @@ impl PoolsState {
         }
     }
 
+    /// TODO the account keys here matter, swap base in can be with a flipped user account source
+    /// and destination and then it swaps the token in and out
     async fn update_pool_state_swap(
         &mut self,
         parsed_accounts: &ParsedAccounts,
@@ -175,13 +177,21 @@ impl PoolsState {
     ) {
         if let Some(pool) = self.raydium_pools.get(&parsed_accounts.amm_id) {
             let mut pool = pool.write().await;
-            assert!(
-                pool.amm_keys.amm_coin_vault
-                    == parsed_accounts.pool_coin_vault
-                    && pool.amm_keys.amm_pc_vault
-                        == parsed_accounts.pool_pc_vault,
-                "Vault mismatch"
-            );
+            if !(pool.amm_keys.amm_coin_vault
+                == parsed_accounts.pool_coin_vault
+                && pool.amm_keys.amm_pc_vault
+                    == parsed_accounts.pool_pc_vault)
+            {
+                error!(
+                    "Vault mismatch: {} {} {} {} {}",
+                    pool.amm_keys.amm_pool,
+                    pool.amm_keys.amm_coin_vault,
+                    parsed_accounts.pool_coin_vault,
+                    pool.amm_keys.amm_pc_vault,
+                    parsed_accounts.pool_pc_vault,
+                );
+                return;
+            };
 
             let swap_direction = if is_swap_base_in {
                 raydium_amm::math::SwapDirection::Coin2PC
