@@ -219,6 +219,7 @@ impl Processor {
                 self.fec_set_success += 1;
                 self.total_processed_data += data_shreds.len() as u128;
                 fec_set.processed = true;
+                self.fec_sets.remove(&(slot, fec_set_index));
                 if let Err(e) = self.entry_sender.send(entries).await {
                     error!(
                         "Failed to send entries for slot {} FEC set {}: {:?}",
