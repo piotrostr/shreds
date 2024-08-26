@@ -122,7 +122,10 @@ impl PoolsState {
             || pool_coin_vault.is_none()
             || pool_pc_vault.is_none()
         {
-            warn!("Failed to get account keys for Raydium AMM instruction");
+            warn!(
+                "{} Failed to get account keys for Raydium AMM instruction",
+                signature.to_string()
+            );
             return;
         }
         let amm_id = amm_id.unwrap();
