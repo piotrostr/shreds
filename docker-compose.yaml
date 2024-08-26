@@ -25,9 +25,11 @@ services:
       - type: bind
         source: ./raydium.json
         target: /raydium.json
+      - type: bind
+        source: ./shreds.log
+        target: /shreds.log
       - .env:/.env
       - ./FAST.json:/FAST.json
-      - ./shreds.log:/shreds.log
     ports:
       - "8001:8001/udp"
 
@@ -42,9 +44,11 @@ services:
       - type: bind
         source: ./raydium.json
         target: /raydium.json
+      - type: bind
+        source: ./shreds.log
+        target: /shreds.log
       - .env:/.env
       - ./FAST.json:/FAST.json
-      - ./shreds.log:/shreds.log
     command: ["./shreds", "--benchmark"]
     ports:
       - "8001:8001/udp"
