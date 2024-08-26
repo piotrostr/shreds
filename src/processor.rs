@@ -1,4 +1,5 @@
 use log::{debug, error, info, warn};
+use serde_json::json;
 use solana_entry::entry::Entry;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -66,6 +67,26 @@ impl Processor {
             fec_set_success: 0,
             fec_set_failure: 0,
         }
+    }
+
+    pub fn metrics(&self) -> String {
+        let metrics = json!({
+            "total_collected_data": self.total_collected_data,
+            "total_collected_coding": self.total_collected_coding,
+            "total_processed_data": self.total_processed_data,
+            "fec_set_success_count": self.fec_set_success,
+            "fec_set_failure_count": self.fec_set_failure,
+            "fec_sets_remaining": self.fec_sets.len(),
+            "fec_sets_summary": {
+                "total_count": self.fec_sets.len(),
+                "incomplete_count": self.fec_sets
+                    .values()
+                    .filter(|set| !Self::is_fec_set_complete(set)).count(),
+            }
+        });
+
+        serde_json::to_string_pretty(&metrics)
+            .unwrap_or_else(|_| "Error serializing metrics".to_string())
     }
 
     pub async fn cleanup_processed_batches(&mut self) {
@@ -311,30 +332,9 @@ mod tests {
         info!("Cleaning up processed batches");
         processor.cleanup_processed_batches().await;
 
-        println!("Total collected data: {}", processor.total_collected_data);
-        println!(
-            "Total collected coding: {}",
-            processor.total_collected_coding
-        );
-        println!(
-            "Total processed (data): {}",
-            processor.total_processed_data
-        );
-        println!("FEC set success count: {}", processor.fec_set_success);
-        println!("FEC set failure count: {}", processor.fec_set_failure);
-        println!("FEC sets remaining: {}", processor.fec_sets.len());
-        processor.fec_sets.iter().for_each(|((slot, fec_set_index), fec_set)| {
-            println!(
-                "* Slot {} FEC set {} - Data: {}/{:?}, Coding: {}/{:?}, Last in slot: {}",
-                slot,
-                fec_set_index,
-                fec_set.data_shreds.len(),
-                fec_set.num_expected_data,
-                fec_set.coding_shreds.len(),
-                fec_set.num_expected_coding,
-                fec_set.is_last_in_slot
-            )
-        });
+        info!("{}", processor.metrics());
+
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
 
         tokio::time::sleep(std::time::Duration::from_secs(3)).await;
 

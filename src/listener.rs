@@ -53,15 +53,34 @@ pub async fn run_listener_with_algo(
     let (entry_sender, entry_receiver) = tokio::sync::mpsc::channel(2000);
     let (error_sender, error_receiver) = tokio::sync::mpsc::channel(2000);
     let (sig_sender, mut sig_receiver) = tokio::sync::mpsc::channel(2000);
-    let mut processor = Processor::new(entry_sender, error_sender);
+    let processor =
+        Arc::new(RwLock::new(Processor::new(entry_sender, error_sender)));
 
+    info!("Listening on {}", bind_addr);
+
+    // metrics loop
+    info!("Starting metrics loop");
+    let processor_clone = processor.clone();
+    tokio::spawn(async move {
+        loop {
+            sleep(Duration::from_secs(6)).await;
+            {
+                let metrics = processor_clone.read().await.metrics();
+                info!("metrics: {:?}", metrics);
+                drop(metrics);
+            }
+        }
+    });
+
+    info!("Starting listener");
     let mut buf = [0u8; PACKET_SIZE]; // max shred size
+    let processor = processor.clone();
     tokio::spawn(async move {
         loop {
             match socket.recv_from(&mut buf).await {
                 Ok((received, _)) => {
                     let packet = Vec::from(&buf[..received]);
-                    processor.collect(Arc::new(packet)).await;
+                    processor.write().await.collect(Arc::new(packet)).await;
                 }
                 Err(e) => {
                     error!("Error receiving packet: {:?}", e);
@@ -70,6 +89,7 @@ pub async fn run_listener_with_algo(
         }
     });
 
+    info!("Starting algo");
     tokio::spawn(async move {
         let pools_state = Arc::new(RwLock::new(PoolsState::default()));
         algo::receive_entries(
@@ -81,6 +101,7 @@ pub async fn run_listener_with_algo(
         .await;
     });
 
+    info!("Starting sigs loop");
     tokio::spawn({
         let shreds_sigs = shreds_sigs.clone();
         async move {
