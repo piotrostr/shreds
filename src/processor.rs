@@ -29,6 +29,7 @@ struct FecSet {
     num_expected_data: Option<u16>,
     num_expected_coding: Option<u16>,
     is_last_in_slot: bool,
+    processed: bool,
 }
 
 #[derive(Debug)]
@@ -77,6 +78,10 @@ impl Processor {
             "fec_set_success_count": self.fec_set_success,
             "fec_set_failure_count": self.fec_set_failure,
             "fec_sets_remaining": self.fec_sets.len(),
+            // "fec_sets_flagged_processed": self.fec_sets
+            //      .values()
+            //      .filter(|set| set.processed)
+            //      .count(),
             "fec_sets_summary": {
                 "total_count": self.fec_sets.len(),
                 "incomplete_count": self.fec_sets
@@ -113,6 +118,7 @@ impl Processor {
             .fec_sets
             .entry((slot, fec_set_index))
             .or_insert_with(|| FecSet {
+                processed: false,
                 data_shreds: HashMap::new(),
                 coding_shreds: HashMap::new(),
                 num_expected_data: None,
@@ -165,10 +171,14 @@ impl Processor {
     }
 
     async fn process_fec_set(&mut self, slot: Slot, fec_set_index: u32) {
-        let fec_set = match self.fec_sets.get(&(slot, fec_set_index)) {
+        let fec_set = match self.fec_sets.get_mut(&(slot, fec_set_index)) {
             Some(set) => set,
             None => return,
         };
+
+        if fec_set.processed {
+            return;
+        }
 
         let expected_data_shreds =
             fec_set.num_expected_data.unwrap_or(1) as usize;
@@ -230,6 +240,7 @@ impl Processor {
         match deserialize_entries(&deshredded_data) {
             Ok(entries) => {
                 self.fec_set_success += 1;
+                fec_set.processed = true;
                 if let Err(e) = self.entry_sender.send(entries).await {
                     error!(
                         "Failed to send entries for slot {} FEC set {}: {:?}",
