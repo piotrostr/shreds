@@ -329,7 +329,7 @@ pub async fn receive_entries(
 ) {
     let mints_of_interest = [
         "3S8qX1MsMqRbiwKg2cQyx7nis1oHMgaCuc9c4VfvVdPN", // mother
-        "EbZh3FDVcgnLNbh1ooatcDL1RCRhBgTKirFKNoGPpump", // gringo
+        // "EbZh3FDVcgnLNbh1ooatcDL1RCRhBgTKirFKNoGPpump", // gringo
         "GYKmdfcUmZVrqfcH1g579BGjuzSRijj3LBuwv79rpump", // wdog
         "8Ki8DpuWNxu9VsS3kQbarsCWMcFGWkzzA8pUPto9zBd5", // lockin
         "HiHULk2EEF6kGfMar19QywmaTJLUr3LA1em8DyW1pump", // ddc
