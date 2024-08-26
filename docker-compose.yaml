@@ -27,6 +27,7 @@ services:
         target: /raydium.json
       - .env:/.env
       - ./FAST.json:/FAST.json
+      - ./logs:/logs
     ports:
       - "8001:8001/udp"
 
@@ -43,6 +44,7 @@ services:
         target: /raydium.json
       - .env:/.env
       - ./FAST.json:/FAST.json
+      - ./logs:/logs
     command: ["./shreds", "--benchmark"]
     ports:
       - "8001:8001/udp"
