@@ -44,6 +44,7 @@ pub async fn dump_to_file(received_packets: Arc<Mutex<Vec<Vec<u8>>>>) {
 pub async fn run_listener_with_algo(
     bind_addr: &str,
     shreds_sigs: Option<Sigs>,
+    bench: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let socket = Arc::new(
         UdpSocket::bind(bind_addr)
@@ -106,13 +107,15 @@ pub async fn run_listener_with_algo(
         let shreds_sigs = shreds_sigs.clone();
         async move {
             while let Some(sig) = sig_receiver.recv().await {
-                if let Some(shreds_sigs) = &shreds_sigs {
-                    let timestamp = chrono::Utc::now().timestamp_millis();
-                    info!("algo: {} {}", timestamp, sig);
-                    shreds_sigs
-                        .write()
-                        .await
-                        .push((timestamp as u64, sig.clone()));
+                if bench {
+                    if let Some(shreds_sigs) = &shreds_sigs {
+                        let timestamp = chrono::Utc::now().timestamp_millis();
+                        info!("algo: {} {}", timestamp, sig);
+                        shreds_sigs
+                            .write()
+                            .await
+                            .push((timestamp as u64, sig.clone()));
+                    }
                 }
             }
         }

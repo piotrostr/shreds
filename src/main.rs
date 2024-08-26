@@ -96,9 +96,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let shreds_handle = tokio::spawn({
             let shreds_sigs = shreds_sigs.clone();
             async move {
-                listener::run_listener_with_algo(&cli.bind, Some(shreds_sigs))
-                    .await
-                    .expect("shreds")
+                listener::run_listener_with_algo(
+                    &cli.bind,
+                    Some(shreds_sigs),
+                    true,
+                )
+                .await
+                .expect("shreds")
             }
         });
 
@@ -126,6 +130,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         listener::run_listener_with_algo(
             &cli.bind,
             Some(Arc::new(RwLock::new(vec![]))),
+            false,
         )
         .await?;
     }

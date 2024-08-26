@@ -263,10 +263,7 @@ mod tests {
     #[tokio::test]
     async fn processor_works() {
         dotenv::dotenv().ok();
-        env_logger::Builder::default()
-            .format_module_path(false)
-            .filter_level(log::LevelFilter::Info)
-            .init();
+        crate::logger::setup().expect("logger setup");
 
         let data = std::fs::read_to_string("packets.json")
             .expect("Failed to read packets.json");

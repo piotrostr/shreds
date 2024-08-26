@@ -36,6 +36,7 @@ use raydium_library::amm::{self, openbook};
 pub const WHIRLPOOL: &str = "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc";
 pub const RAYDIUM_CP: &str = "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C";
 pub const RAYDIUM_AMM: &str = "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8";
+pub const WSOL: &str = "So11111111111111111111111111111111111111112";
 
 #[derive(Debug, Default)]
 pub struct PoolsState {
@@ -163,6 +164,7 @@ impl PoolsState {
             }
         }
     }
+
     async fn update_pool_state_swap(
         &mut self,
         parsed_accounts: &ParsedAccounts,
@@ -173,12 +175,15 @@ impl PoolsState {
     ) {
         if let Some(pool) = self.raydium_pools.get(&parsed_accounts.amm_id) {
             let mut pool = pool.write().await;
-            let is_coin_to_pc = pool.amm_keys.amm_coin_vault
-                == parsed_accounts.pool_coin_vault
-                && pool.amm_keys.amm_pc_vault
-                    == parsed_accounts.pool_pc_vault;
+            assert!(
+                pool.amm_keys.amm_coin_vault
+                    == parsed_accounts.pool_coin_vault
+                    && pool.amm_keys.amm_pc_vault
+                        == parsed_accounts.pool_pc_vault,
+                "Vault mismatch"
+            );
 
-            let swap_direction = if is_coin_to_pc {
+            let swap_direction = if is_swap_base_in {
                 raydium_amm::math::SwapDirection::Coin2PC
             } else {
                 raydium_amm::math::SwapDirection::PC2Coin
@@ -195,7 +200,7 @@ impl PoolsState {
                     true,
                 );
 
-                if is_coin_to_pc {
+                if is_swap_base_in {
                     (
                         pool.state
                             .pool_pc_vault_amount
@@ -225,7 +230,7 @@ impl PoolsState {
                     false,
                 );
 
-                if is_coin_to_pc {
+                if is_swap_base_in {
                     (
                         pool.state
                             .pool_pc_vault_amount
@@ -246,31 +251,55 @@ impl PoolsState {
                 }
             };
 
-            let initial_price = calculate_price(&pool.state, &pool.decimals);
+            let sol_is_pc = pool.amm_keys.amm_pc_mint
+                == Pubkey::from_str(WSOL).expect("pubkey");
+            let sol_is_coin = pool.amm_keys.amm_coin_mint
+                == Pubkey::from_str(WSOL).expect("pubkey");
 
-            // Update pool amounts
+            let sol_amount = if sol_is_coin {
+                if is_swap_base_in {
+                    amount_specified
+                } else {
+                    other_amount_threshold
+                }
+            } else if sol_is_pc {
+                if is_swap_base_in {
+                    other_amount_threshold
+                } else {
+                    amount_specified
+                }
+            } else {
+                0
+            } as f64
+                / 10u64.pow(9u32) as f64;
+
             pool.state.pool_pc_vault_amount = pc_amount;
             pool.state.pool_coin_vault_amount = coin_amount;
 
+            let initial_price = calculate_price(&pool.state, &pool.decimals);
+
             let new_price = calculate_price(&pool.state, &pool.decimals);
 
-            debug!(
-                "{}",
-                serde_json::to_string_pretty(&serde_json::json!({
-                    "event": "Swap",
-                    "signature": signature.to_string(),
-                    "swap_direction": format!("{:?}", swap_direction),
-                    "is_swap_base_in": is_swap_base_in,
-                    "amm_id": parsed_accounts.amm_id.to_string(),
-                    "pc_mint": pool.amm_keys.amm_pc_mint.to_string(),
-                    "amount_specified": amount_specified,
-                    "coin_mint": pool.amm_keys.amm_coin_mint.to_string(),
-                    "other_amount_threshold": other_amount_threshold,
-                    "initial_price": initial_price,
-                    "new_price": new_price,
-                }))
-                .unwrap()
-            );
+            if sol_amount > 10. {
+                info!(
+                    "large swap: ({}) {}",
+                    sol_amount,
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "event": "Swap",
+                        "signature": signature.to_string(),
+                        "swap_direction": format!("{:?}", swap_direction),
+                        "is_swap_base_in": is_swap_base_in,
+                        "amm_id": parsed_accounts.amm_id.to_string(),
+                        "pc_mint": pool.amm_keys.amm_pc_mint.to_string(),
+                        "amount_specified": amount_specified,
+                        "coin_mint": pool.amm_keys.amm_coin_mint.to_string(),
+                        "other_amount_threshold": other_amount_threshold,
+                        "initial_price": initial_price,
+                        "new_price": new_price,
+                    }))
+                    .unwrap()
+                );
+            }
         }
     }
 
@@ -290,13 +319,13 @@ pub async fn receive_entries(
 ) {
     let mints_of_interest = [
         "3S8qX1MsMqRbiwKg2cQyx7nis1oHMgaCuc9c4VfvVdPN", // mother
-        "3B5wuUrMEi5yATD7on46hKfej3pfmd7t1RKgrsN3pump", // billy
-        "CTg3ZgYx79zrE1MteDVkmkcGniiFrK1hJ6yiabropump", // neiro
-        "GiG7Hr61RVm4CSUxJmgiCoySFQtdiwxtqf64MsRppump", // scf
         "EbZh3FDVcgnLNbh1ooatcDL1RCRhBgTKirFKNoGPpump", // gringo
         "GYKmdfcUmZVrqfcH1g579BGjuzSRijj3LBuwv79rpump", // wdog
         "8Ki8DpuWNxu9VsS3kQbarsCWMcFGWkzzA8pUPto9zBd5", // lockin
         "HiHULk2EEF6kGfMar19QywmaTJLUr3LA1em8DyW1pump", // ddc
+        "GiG7Hr61RVm4CSUxJmgiCoySFQtdiwxtqf64MsRppump", // scf
+        "3B5wuUrMEi5yATD7on46hKfej3pfmd7t1RKgrsN3pump", // billy
+        "CTg3ZgYx79zrE1MteDVkmkcGniiFrK1hJ6yiabropump", // neiro
     ]
     .iter()
     .map(|p| Pubkey::from_str(p).unwrap())
