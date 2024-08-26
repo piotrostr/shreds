@@ -58,9 +58,9 @@ pub fn compare_results(
 
     for (pubsub_timestamp, sig) in pubsub_sigs.iter() {
         if let Some(shreds_timestamp) = shreds_sigs_map.remove(sig) {
-            let diff = shreds_timestamp - pubsub_timestamp;
-            info!("diff: {} {}", sig, diff);
-            average_diff += diff as f64;
+            let diff = shreds_timestamp as f64 - *pubsub_timestamp as f64;
+            info!("{} diff: {}", sig, diff);
+            average_diff += diff;
             count += 1;
             match shreds_timestamp.cmp(pubsub_timestamp) {
                 std::cmp::Ordering::Equal => {}
