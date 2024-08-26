@@ -1,4 +1,4 @@
-use log::{debug, error, info, warn};
+use log::{error, info, warn};
 use serde_json::json;
 use solana_entry::entry::Entry;
 use std::collections::{HashMap, HashSet};
@@ -17,9 +17,9 @@ use crate::shred::{
 
 pub const MAX_SHREDS_PER_SLOT: usize = 32_768 / 2;
 
-struct FecSetSuccess {
-    slot: Slot,
-    fec_set_index: u32,
+pub struct FecSetSuccess {
+    pub slot: Slot,
+    pub fec_set_index: u32,
 }
 
 #[derive(Debug)]
@@ -39,8 +39,6 @@ pub struct Processor {
     _handles: Vec<tokio::task::JoinHandle<()>>,
     entry_sender: mpsc::Sender<Vec<Entry>>,
     _error_sender: mpsc::Sender<String>,
-    success_sender: mpsc::Sender<FecSetSuccess>,
-    success_receiver: mpsc::Receiver<FecSetSuccess>,
     total_collected_data: u128,
     total_processed_data: u128,
     total_collected_coding: u128,
@@ -53,7 +51,6 @@ impl Processor {
         entry_sender: mpsc::Sender<Vec<Entry>>,
         error_sender: mpsc::Sender<String>,
     ) -> Self {
-        let (success_sender, success_receiver) = mpsc::channel(2000);
         Processor {
             fec_sets: HashMap::new(),
             uniqueness: HashSet::new(),
@@ -63,8 +60,6 @@ impl Processor {
             total_collected_data: 0,
             total_processed_data: 0,
             total_collected_coding: 0,
-            success_sender,
-            success_receiver,
             fec_set_success: 0,
             fec_set_failure: 0,
         }
@@ -78,10 +73,6 @@ impl Processor {
             "fec_set_success_count": self.fec_set_success,
             "fec_set_failure_count": self.fec_set_failure,
             "fec_sets_remaining": self.fec_sets.len(),
-            // "fec_sets_flagged_processed": self.fec_sets
-            //      .values()
-            //      .filter(|set| set.processed)
-            //      .count(),
             "fec_sets_summary": {
                 "total_count": self.fec_sets.len(),
                 "incomplete_count": self.fec_sets
@@ -92,20 +83,6 @@ impl Processor {
 
         serde_json::to_string_pretty(&metrics)
             .unwrap_or_else(|_| "Error serializing metrics".to_string())
-    }
-
-    pub async fn cleanup_processed_batches(&mut self) {
-        while let Ok(success) = self.success_receiver.try_recv() {
-            let key = (success.slot, success.fec_set_index);
-            if let Some(fec_set) = self.fec_sets.remove(&key) {
-                debug!(
-                    "Slot {} FEC set {} processed successfully",
-                    success.slot, success.fec_set_index
-                );
-                self.total_processed_data +=
-                    fec_set.data_shreds.len() as u128;
-            }
-        }
     }
 
     pub async fn insert(&mut self, slot: Slot, raw_shred: Arc<Vec<u8>>) {
@@ -240,29 +217,14 @@ impl Processor {
         match deserialize_entries(&deshredded_data) {
             Ok(entries) => {
                 self.fec_set_success += 1;
+                self.total_processed_data += data_shreds.len() as u128;
                 fec_set.processed = true;
                 if let Err(e) = self.entry_sender.send(entries).await {
                     error!(
                         "Failed to send entries for slot {} FEC set {}: {:?}",
                         slot, fec_set_index, e
                     );
-                    return;
                 }
-                if let Err(e) = self
-                    .success_sender
-                    .send(FecSetSuccess {
-                        slot,
-                        fec_set_index,
-                    })
-                    .await
-                {
-                    error!(
-                        "Failed to send success for slot {} FEC set {}: {:?}",
-                        slot, fec_set_index, e
-                    );
-                    return;
-                }
-                self.total_processed_data += data_shreds.len() as u128;
             }
             Err(e) => {
                 self.fec_set_failure += 1;
@@ -317,7 +279,7 @@ mod tests {
         tokio::spawn(async move {
             while let Some(sig) = sig_receiver.recv().await {
                 let timestamp = chrono::Utc::now().timestamp_millis();
-                debug!("shreds: {} {}", timestamp, sig);
+                log::debug!("shreds: {} {}", timestamp, sig);
             }
         });
 
@@ -340,12 +302,7 @@ mod tests {
             handle.await.expect("Failed to process batch");
         }
 
-        info!("Cleaning up processed batches");
-        processor.cleanup_processed_batches().await;
-
         info!("{}", processor.metrics());
-
-        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
 
         tokio::time::sleep(std::time::Duration::from_secs(3)).await;
 
