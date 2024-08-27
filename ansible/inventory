@@ -1,2 +1,2 @@
 [your_target_hosts]
-84.32.188.36 ansible_user=root
+84.32.186.231 ansible_user=root
