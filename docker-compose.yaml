@@ -33,13 +33,12 @@ services:
     ports:
       - "8001:8001/udp"
 
-  bench:
+  cli:
     image: piotrostr/shreds
     platform: linux/amd64
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: bench
     volumes:
       - type: bind
         source: ./raydium.json
@@ -47,8 +46,11 @@ services:
       - type: bind
         source: ./shreds.log
         target: /shreds.log
+      - type: bind
+        source: ./packets.json
+        target: /packets.json
       - .env:/.env
       - ./FAST.json:/FAST.json
-    command: ["./shreds", "--benchmark"]
+    command: ["./shreds", "--help"]
     ports:
       - "8001:8001/udp"
