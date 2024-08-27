@@ -7,7 +7,7 @@ services:
       - RUST_LOG=info
       - BLOCK_ENGINE_URL=https://amsterdam.mainnet.block-engine.jito.wtf
       - AUTH_KEYPAIR=auth.json
-      - DESIRED_REGIONS=amsterdam
+      - DESIRED_REGIONS=amsterdam,ny,tokio,frankfurt,slc
       - DEST_IP_PORTS=0.0.0.0:8001
     volumes:
       - ./auth.json:/app/auth.json

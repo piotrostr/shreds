@@ -23,14 +23,27 @@ pub struct FecSetSuccess {
     pub fec_set_index: u32,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct FecSet {
-    data_shreds: HashMap<u32, Arc<Vec<u8>>>,
-    coding_shreds: HashMap<u32, Arc<Vec<u8>>>,
-    num_expected_data: Option<u16>,
-    num_expected_coding: Option<u16>,
-    is_last_in_slot: bool,
-    processed: bool,
+#[derive(Serialize, Deserialize)]
+pub struct FecSet {
+    pub data_shreds: HashMap<u32, Arc<Vec<u8>>>,
+    pub coding_shreds: HashMap<u32, Arc<Vec<u8>>>,
+    pub num_expected_data: Option<u16>,
+    pub num_expected_coding: Option<u16>,
+    pub is_last_in_slot: bool,
+    pub processed: bool,
+}
+
+impl std::fmt::Debug for FecSet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FecSet")
+            .field("data_shreds_count", &self.data_shreds.len())
+            .field("coding_shreds_count", &self.coding_shreds.len())
+            .field("num_expected_data", &self.num_expected_data)
+            .field("num_expected_coding", &self.num_expected_coding)
+            .field("is_last_in_slot", &self.is_last_in_slot)
+            .field("processed", &self.processed)
+            .finish()
+    }
 }
 
 #[derive(Debug)]
