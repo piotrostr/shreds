@@ -140,22 +140,22 @@ pub async fn run_listener_with_save(
     let receiver = received_packets.clone();
     let socket_clone = socket.clone();
 
-    let listen_handle = tokio::spawn(async move {
+    tokio::spawn(async move {
         listen(socket_clone, receiver).await;
     });
 
-    let packets_clone = received_packets.clone();
-    tokio::spawn(async move {
-        loop {
-            let packets = packets_clone.lock().await;
-            info!("Total packets received: {}", packets.len());
-            if packets.len() > 100_000 {
-                dump_to_file(received_packets.clone()).await;
-            }
-            drop(packets);
-            sleep(Duration::from_secs(1)).await;
+    loop {
+        let packets = received_packets.lock().await;
+        info!("Total packets received: {}", packets.len());
+        if packets.len() > 100_000 {
+            info!("Dumping packets to file");
+            dump_to_file(received_packets.clone()).await;
+            info!("Packets dumped to packets.json");
+            break;
         }
-    });
+        drop(packets);
+        sleep(Duration::from_secs(1)).await;
+    }
 
     signal::ctrl_c().await.expect("Failed to listen for Ctrl+C");
     Ok(())
