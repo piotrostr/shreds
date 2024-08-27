@@ -149,15 +149,14 @@ pub async fn run_listener_with_save(
         loop {
             let packets = packets_clone.lock().await;
             info!("Total packets received: {}", packets.len());
+            if packets.len() > 100_000 {
+                dump_to_file(received_packets.clone()).await;
+            }
             drop(packets);
             sleep(Duration::from_secs(1)).await;
         }
     });
 
     signal::ctrl_c().await.expect("Failed to listen for Ctrl+C");
-    info!("Ctrl+C received, dumping packets to file...");
-    dump_to_file(received_packets).await;
-    listen_handle.abort();
-
     Ok(())
 }
