@@ -149,14 +149,11 @@ pub async fn run_listener_with_save(
         info!("Total packets received: {}", packets.len());
         if packets.len() > 100_000 {
             info!("Dumping packets to file");
-            dump_to_file(received_packets.clone()).await;
-            info!("Packets dumped to packets.json");
             break;
         }
         drop(packets);
         sleep(Duration::from_secs(1)).await;
     }
-
-    signal::ctrl_c().await.expect("Failed to listen for Ctrl+C");
+    dump_to_file(received_packets).await;
     Ok(())
 }
