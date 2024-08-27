@@ -14,6 +14,7 @@ use crate::shred::{
     deserialize_entries, deshred, get_coding_shred_header, get_fec_set_index,
     get_last_in_slot, get_shred_index, is_shred_data, CodingShredHeader,
 };
+use serde::{Deserialize, Serialize};
 
 pub const MAX_SHREDS_PER_SLOT: usize = 32_768 / 2;
 
@@ -22,7 +23,7 @@ pub struct FecSetSuccess {
     pub fec_set_index: u32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 struct FecSet {
     data_shreds: HashMap<u32, Arc<Vec<u8>>>,
     coding_shreds: HashMap<u32, Arc<Vec<u8>>>,
@@ -65,7 +66,33 @@ impl Processor {
         }
     }
 
+    fn dump_hanging_fec_sets(&self) {
+        let start = std::time::Instant::now();
+        let file = std::fs::File::create("hanging_fec_sets.json").unwrap();
+        let incomplete = self
+            .fec_sets
+            .values()
+            .filter(|set| !Self::is_fec_set_complete(set))
+            .collect::<Vec<_>>();
+        let serialized = serde_json::to_string_pretty(&incomplete).unwrap();
+        std::io::Write::write_all(
+            &mut std::io::BufWriter::new(file),
+            serialized.as_bytes(),
+        )
+        .unwrap();
+        info!(
+            "Dumped {} incomplete FEC sets in {}ms",
+            incomplete.len(),
+            start.elapsed().as_millis()
+        );
+    }
+
     pub fn metrics(&self) -> String {
+        let incomplete_count = self
+            .fec_sets
+            .values()
+            .filter(|set| !Self::is_fec_set_complete(set))
+            .count();
         let metrics = json!({
             "total_collected_data": self.total_collected_data,
             "total_collected_coding": self.total_collected_coding,
@@ -75,11 +102,16 @@ impl Processor {
             "fec_sets_remaining": self.fec_sets.len(),
             "fec_sets_summary": {
                 "total_count": self.fec_sets.len(),
-                "incomplete_count": self.fec_sets
-                    .values()
-                    .filter(|set| !Self::is_fec_set_complete(set)).count(),
+                "incomplete_count": incomplete_count,
             }
         });
+
+        // dump only once (fishing for more testing data)
+        if incomplete_count > 1000
+            && !std::path::Path::new("hanging_fec_sets.json").exists()
+        {
+            self.dump_hanging_fec_sets();
+        }
 
         serde_json::to_string_pretty(&metrics)
             .unwrap_or_else(|_| "Error serializing metrics".to_string())
