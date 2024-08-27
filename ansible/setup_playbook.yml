@@ -1,0 +1,107 @@
+---
+- name: Install Docker, setup SSH, clone repo, and build app
+  hosts: your_target_hosts
+  become: yes
+
+  vars:
+    github_repo: "shreds"
+    github_username: "piotrostr"
+    ssh_key_dir: "/{{ ansible_user }}/.ssh"
+    ssh_key_path: "/{{ ansible_user }}/.ssh/id_rsa"
+
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+
+    - name: Install required packages
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - software-properties-common
+          - openssl
+        state: present
+
+    - name: Add Docker GPG apt Key
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+
+    - name: Add Docker Repository
+      apt_repository:
+        repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable
+        state: present
+
+    - name: Install Docker
+      apt:
+        name: docker-ce
+        state: present
+
+    - name: Ensure Docker service is running
+      service:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Ensure .ssh directory exists
+      file:
+        path: "{{ ssh_key_dir }}"
+        state: directory
+        mode: "0700"
+      become: yes
+
+    - name: Generate SSH key
+      openssh_keypair:
+        path: "{{ ssh_key_path }}"
+        type: rsa
+        size: 4096
+      become: yes
+
+    - name: Get SSH public key
+      command: "cat {{ ssh_key_path }}.pub"
+      register: public_key
+
+    - name: Display public key and wait for user
+      pause:
+        prompt: |
+          Please add the following public key to your GitHub account:
+
+          {{ public_key.stdout }}
+
+          Use the provided bash script to add the key:
+          ./add_github_key.sh "{{ public_key.stdout }}"
+
+          Press ENTER when you've added the key to continue...
+
+    - name: Clone GitHub repository
+      git:
+        repo: "git@github.com:{{ github_username }}/{{ github_repo }}.git"
+        dest: /{{ ansible_user }}/{{ github_repo }}
+        accept_hostkey: yes
+        key_file: "{{ ssh_key_path }}"
+
+    - name: Copy over auth.json
+      copy:
+        src: ../auth.json
+        dest: /{{ ansible_user }}/{{ github_repo }}/auth.json
+
+    - name: Copy over FAST.json
+      copy:
+        src: ../FAST.json
+        dest: /{{ ansible_user }}/{{ github_repo }}/FAST.json
+
+    - name: Copy over .env
+      copy:
+        src: ../.env
+        dest: /{{ ansible_user }}/{{ github_repo }}/.env
+
+    - name: Copy over raydium.json
+      copy:
+        src: ../raydium.json
+        dest: /{{ ansible_user }}/{{ github_repo }}/raydium.json
+
+    - name: Print SSH instructions
+      debug:
+        msg: "all gucci, `ssh {{ ansible_user }}@{{ inventory_hostname }}`"
