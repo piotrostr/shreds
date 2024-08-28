@@ -37,6 +37,9 @@ struct Cli {
 
     #[arg(long)]
     pubsub: bool,
+
+    #[arg(long)]
+    pump: bool,
 }
 
 #[tokio::main(flavor = "multi_thread")]
@@ -101,6 +104,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     &cli.bind,
                     Some(shreds_sigs),
                     true,
+                    false,
                 )
                 .await
                 .expect("shreds")
@@ -127,11 +131,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         info!("Binding to address: {}", cli.bind);
 
-        info!("Running in algo mode");
+        info!("Running in algo mode: pump={}", cli.pump);
         listener::run_listener_with_algo(
             &cli.bind,
             Some(Arc::new(RwLock::new(vec![]))),
             false,
+            cli.pump,
         )
         .await?;
     }

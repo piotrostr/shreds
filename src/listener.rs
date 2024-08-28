@@ -46,6 +46,7 @@ pub async fn run_listener_with_algo(
     bind_addr: &str,
     shreds_sigs: Option<Sigs>,
     bench: bool,
+    pump_mode: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let socket = Arc::new(
         UdpSocket::bind(bind_addr)
@@ -94,16 +95,25 @@ pub async fn run_listener_with_algo(
     info!("Starting algo");
     tokio::spawn(async move {
         let pools_state = Arc::new(RwLock::new(PoolsState::default()));
+        let config = if pump_mode {
+            AlgoConfig {
+                arb_mode: false,
+                mints_of_interest: vec![],
+                pump_mode: true,
+            }
+        } else {
+            AlgoConfig {
+                arb_mode: true,
+                mints_of_interest: get_mints_of_interest(),
+                pump_mode: false,
+            }
+        };
         algo::receive_entries(
             pools_state.clone(),
             entry_receiver,
             error_receiver,
             Arc::new(sig_sender),
-            Arc::new(AlgoConfig {
-                arb_mode: false,
-                mints_of_interest: get_mints_of_interest(),
-                pump_mode: true,
-            }),
+            Arc::new(config),
         )
         .await;
     });
