@@ -1,17 +1,23 @@
+use futures_util::future::join_all;
 use futures_util::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use log::{info, warn};
+use once_cell::sync::Lazy;
 use raydium_amm::math::{CheckedCeilDiv, SwapDirection, U128};
-use raydium_library::amm::{AmmKeys, CalculateResult};
+use raydium_library::amm::{self, openbook, AmmKeys, CalculateResult};
 use reqwest::Client;
 use serde_json::Value;
+use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
+use solana_sdk::signature::Keypair;
+use solana_sdk::signer::{EncodableKey, Signer};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
+use tokio::sync::RwLock;
 
 use raydium_amm::instruction::{
     AdminCancelOrdersInstruction, ConfigArgs, DepositInstruction,
@@ -21,6 +27,10 @@ use raydium_amm::instruction::{
     WithdrawSrmInstruction,
 };
 use solana_program::program_error::ProgramError;
+
+use crate::algo::env;
+use crate::arb::PoolsState;
+use crate::constants;
 
 pub struct ParsedAccounts {
     pub amm_id: Pubkey,
@@ -43,6 +53,87 @@ pub struct RaydiumAmmPool {
     pub state: CalculateResult,
     pub decimals: RaydiumDecimals,
 }
+
+pub async fn initialize_raydium_amm_pools(
+    rpc_client: &RpcClient,
+    pools_state: &mut PoolsState,
+    mints_of_interest: Vec<Pubkey>,
+) {
+    info!("Reading in raydium.json (large file)");
+    let amm_keys_map =
+        parse_raydium_json(RAYDIUM_JSON.clone(), mints_of_interest.clone())
+            .expect("parse raydium json");
+    let amm_program =
+        Pubkey::from_str(constants::RAYDIUM_AMM).expect("pubkey");
+    let payer = Keypair::read_from_file(env("FUND_KEYPAIR_PATH"))
+        .expect("Failed to read keypair");
+    let fee_payer = payer.pubkey();
+
+    // Fetch results
+    let futures = mints_of_interest.iter().map(|mint| {
+        let amm_keys_map = amm_keys_map.clone();
+        async move {
+            let amm_keys_vec = amm_keys_map.get(mint).unwrap(); // bound to exist
+            let mut results = Vec::new();
+            for (amm_keys, decimals) in amm_keys_vec.iter() {
+                info!("Loading AMM keys for pool: {:?}", amm_keys.amm_pool);
+                let market_keys = openbook::get_keys_for_market(
+                    rpc_client,
+                    &amm_keys.market_program,
+                    &amm_keys.market,
+                )
+                .await
+                .expect("get market keys");
+                let state = amm::calculate_pool_vault_amounts(
+                    rpc_client,
+                    &amm_program,
+                    &amm_keys.amm_pool,
+                    amm_keys,
+                    &market_keys,
+                    amm::utils::CalculateMethod::Simulate(fee_payer),
+                )
+                .await
+                .expect("calculate pool vault amounts");
+                results.push((*mint, *amm_keys, state, *decimals));
+            }
+            results
+        }
+    });
+
+    // Join all futures
+    let all_results = join_all(futures).await;
+
+    // Update pools_state
+    for results in all_results {
+        for (mint, amm_keys, state, decimals) in results {
+            pools_state.raydium_pools.insert(
+                amm_keys.amm_pool,
+                Arc::new(RwLock::new(RaydiumAmmPool {
+                    token: mint,
+                    amm_keys,
+                    state,
+                    decimals,
+                })),
+            );
+            pools_state
+                .raydium_pools_by_mint
+                .entry(mint)
+                .or_default()
+                .push(amm_keys.amm_pool);
+        }
+    }
+}
+
+static RAYDIUM_JSON: Lazy<Arc<Value>> = Lazy::new(|| {
+    if !std::path::Path::new("raydium.json").exists() {
+        panic!("raydium.json not found, download it first");
+    }
+    let json_str = std::fs::read_to_string("raydium.json")
+        .expect("Failed to read raydium.json");
+    let json_value: Value = serde_json::from_str(&json_str)
+        .expect("Failed to parse raydium.json");
+    Arc::new(json_value)
+});
 
 pub fn calculate_price(
     state: &CalculateResult,

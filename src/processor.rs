@@ -301,14 +301,19 @@ impl Processor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algo::{self, PoolsState};
+    use crate::algo::{receive_entries, AlgoConfig};
+    use crate::arb::{get_mints_of_interest, PoolsState};
+    use crate::pump::PumpCreateIx;
+    use borsh::BorshDeserialize;
     use log::info;
     use tokio::sync::RwLock;
 
     #[tokio::test]
     async fn processor_works() {
         dotenv::dotenv().ok();
-        crate::logger::setup().expect("logger setup");
+        env_logger::Builder::default()
+            .filter_level(log::LevelFilter::Info)
+            .init();
 
         let data = std::fs::read_to_string("packets.json")
             .expect("Failed to read packets.json");
@@ -333,11 +338,16 @@ mod tests {
 
         let pools_state = Arc::new(RwLock::new(PoolsState::default()));
 
-        algo::receive_entries(
+        receive_entries(
             pools_state.clone(),
             entry_receiver,
             error_receiver,
             Arc::new(sig_sender),
+            Arc::new(AlgoConfig {
+                arb_mode: false,
+                mints_of_interest: get_mints_of_interest(),
+                pump_mode: true,
+            }),
         )
         .await;
 
@@ -354,5 +364,23 @@ mod tests {
             "Pools state: orca txs: {} raydium txs: {}",
             pools_state.orca_count, pools_state.raydium_amm_count,
         );
+    }
+
+    #[test]
+    fn deserialize_pump_create_ix() {
+        let bytes = vec![
+            0x18, 0x1e, 0xc8, 0x28, 0x05, 0x1c, 0x07, 0x77, 0x05, 0x00, 0x00,
+            0x00, 0x42, 0x52, 0x4f, 0x4b, 0x45, 0x03, 0x00, 0x00, 0x00, 0x42,
+            0x52, 0x4b, 0x43, 0x00, 0x00, 0x00, 0x68, 0x74, 0x74, 0x70, 0x73,
+            0x3a, 0x2f, 0x2f, 0x69, 0x70, 0x66, 0x73, 0x2e, 0x69, 0x6f, 0x2f,
+            0x69, 0x70, 0x66, 0x73, 0x2f, 0x51, 0x6d, 0x5a, 0x77, 0x65, 0x7a,
+            0x4d, 0x7a, 0x43, 0x63, 0x35, 0x63, 0x35, 0x35, 0x71, 0x68, 0x71,
+            0x72, 0x55, 0x71, 0x34, 0x63, 0x31, 0x4e, 0x41, 0x4c, 0x6e, 0x78,
+            0x78, 0x31, 0x67, 0x32, 0x5a, 0x76, 0x4b, 0x36, 0x33, 0x64, 0x46,
+            0x38, 0x35, 0x6b, 0x32, 0x77, 0x31, 0x50,
+        ];
+        println!("size: {}", bytes.len());
+        let create = PumpCreateIx::try_from_slice(&bytes).unwrap();
+        println!("{:?}", create);
     }
 }

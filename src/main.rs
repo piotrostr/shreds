@@ -5,11 +5,12 @@ use tokio::time::sleep;
 
 use clap::{command, Parser};
 use log::info;
-use shreds::algo::RAYDIUM_AMM;
 use shreds::benchmark::compare_results;
 use shreds::raydium::download_raydium_json;
 use shreds::{benchmark, listener, logger};
 use tokio::sync::RwLock;
+
+use shreds::constants;
 
 #[derive(Parser)]
 #[command(name = "shreds", version = "1.0", author = "piotrostr")]
@@ -58,7 +59,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             async move {
                 tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
                 benchmark::listen_pubsub(
-                    vec![RAYDIUM_AMM.to_string()],
+                    vec![constants::RAYDIUM_AMM.to_string()],
                     pubsub_sigs,
                 )
                 .await
@@ -86,7 +87,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             async move {
                 tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
                 benchmark::listen_pubsub(
-                    vec![RAYDIUM_AMM.to_string()],
+                    vec![constants::RAYDIUM_AMM.to_string()],
                     pubsub_sigs,
                 )
                 .await

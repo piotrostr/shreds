@@ -6,7 +6,8 @@ use tokio::signal;
 use tokio::sync::{Mutex, RwLock};
 use tokio::time::{sleep, Duration};
 
-use crate::algo::{self, PoolsState};
+use crate::algo::{self, AlgoConfig};
+use crate::arb::{get_mints_of_interest, PoolsState};
 use crate::benchmark::Sigs;
 use crate::processor::Processor;
 
@@ -98,6 +99,11 @@ pub async fn run_listener_with_algo(
             entry_receiver,
             error_receiver,
             Arc::new(sig_sender),
+            Arc::new(AlgoConfig {
+                arb_mode: false,
+                mints_of_interest: get_mints_of_interest(),
+                pump_mode: true,
+            }),
         )
         .await;
     });
