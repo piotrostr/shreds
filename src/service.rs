@@ -48,7 +48,7 @@ pub async fn run(
             sleep(Duration::from_secs(6)).await;
             {
                 let metrics = shred_processor_clone.read().await.metrics();
-                info!("metrics: {:?}", metrics);
+                info!("metrics: {}", metrics);
                 drop(metrics);
             }
         }

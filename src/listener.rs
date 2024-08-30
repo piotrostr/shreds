@@ -71,7 +71,7 @@ pub async fn run_listener_with_algo(
             sleep(Duration::from_secs(6)).await;
             {
                 let metrics = shred_processor_clone.read().await.metrics();
-                info!("metrics: {:?}", metrics);
+                info!("metrics: {}", metrics);
                 drop(metrics);
             }
         }
