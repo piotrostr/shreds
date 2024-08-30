@@ -187,6 +187,7 @@ impl PumpEntryProcessor {
 
         // this might be tiny bit blocking
         for event in events {
+            info!("batch of {} entries, sig: {}", entries.len(), event.sig);
             self.post_webhook(event.clone()).await;
             self.sig_tx.send(event.sig.clone()).await.unwrap();
         }
