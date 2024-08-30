@@ -83,8 +83,10 @@ pub async fn run(
         }
     });
 
+    info!("Starting entry processor");
     let entry_processor_handle = match mode {
         Mode::Arb => tokio::spawn(async move {
+            info!("Arb mode");
             let pools_state = Arc::new(RwLock::new(PoolsState::default()));
             pools_state.write().await.initialize().await;
             let mut entry_processor = ArbEntryProcessor::new(
@@ -96,7 +98,7 @@ pub async fn run(
             entry_processor.receive_entries().await;
         }),
         Mode::Pump => {
-            info!("Starting entries rx (<=> webhook tx) pump mode");
+            info!("Pump mode");
             tokio::spawn(async move {
                 let mut entry_processor = PumpEntryProcessor::new(
                     entry_rx, error_rx, sig_tx, post_url,
