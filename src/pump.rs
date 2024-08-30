@@ -1,6 +1,15 @@
 use borsh::{BorshDeserialize, BorshSerialize};
+use serde::{Deserialize, Serialize};
 
-#[derive(BorshDeserialize, BorshSerialize)]
+#[derive(
+    BorshDeserialize,
+    BorshSerialize,
+    Serialize,
+    Deserialize,
+    Clone,
+    Default,
+    Copy,
+)]
 pub struct PumpCreateIx {
     pub method_id: [u8; 8],
     pub name: String,
@@ -18,7 +27,15 @@ impl std::fmt::Debug for PumpCreateIx {
     }
 }
 
-#[derive(BorshDeserialize, BorshSerialize)]
+#[derive(
+    BorshDeserialize,
+    BorshSerialize,
+    Serialize,
+    Deserialize,
+    Clone,
+    Default,
+    Copy,
+)]
 pub struct PumpSwapIx {
     pub method_id: [u8; 8],
     pub amount: u64,

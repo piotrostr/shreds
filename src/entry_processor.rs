@@ -100,10 +100,16 @@ pub struct PumpEntryProcessor {
     client: reqwest::Client,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CreatePumpTokenEvent {
-    sig: String,
+    pub sig: String,
     // other fields
+    pub name: String,
+    pub symbol: String,
+    pub uri: String,
+    pub dev_bought_amount: u64,
+    pub dev_max_sol_cost: u64,
+    pub num_dev_buy_txs: u64,
 }
 
 impl PumpEntryProcessor {
@@ -135,7 +141,7 @@ impl PumpEntryProcessor {
         }
     }
 
-    /// process_entries is pretty naive, it should distinguish among all pump events
+    /// TODO each vec of entries should be included metadata about slot of deshred
     pub async fn process_entries(&self, entries: Vec<Entry>) {
         let events = entries
             .par_iter()
@@ -144,9 +150,7 @@ impl PumpEntryProcessor {
                     .transactions
                     .par_iter()
                     .map(|tx| {
-                        let event = CreatePumpTokenEvent {
-                            sig: tx.signatures[0].to_string(),
-                        };
+                        let mut event = CreatePumpTokenEvent::default();
                         if tx.message.static_account_keys().contains(
                             &Pubkey::from_str(
                                 constants::PUMP_FUN_MINT_AUTHORITY,
@@ -155,29 +159,29 @@ impl PumpEntryProcessor {
                         ) {
                             // here parse all the required data and send the webhook, this has to go in sync
                             info!("Pump token created: {}", tx.signatures[0]);
-                            tx.message.instructions().par_iter().for_each(
-                                |ix| {
-                                    if let Ok(swap) =
-                                        PumpSwapIx::try_from_slice(&ix.data)
-                                    {
-                                        info!(
-                                            "Pump token swapped: {} ({} SOL)",
-                                            swap.amount,
-                                            swap.max_sol_cost as f64
-                                                / 1_000_000_000.0,
-                                        );
-                                    } else if let Ok(token_metadata) =
-                                        PumpCreateIx::try_from_slice(&ix.data)
-                                    {
-                                        info!(
-                                            "{} ${}",
-                                            token_metadata.name,
-                                            token_metadata.symbol,
-                                        );
-                                    }
-                                },
-                            );
+                            tx.message.instructions().iter().for_each(|ix| {
+                                if let Ok(swap) =
+                                    PumpSwapIx::try_from_slice(&ix.data)
+                                {
+                                    event.dev_bought_amount += swap.amount;
+                                    event.dev_max_sol_cost +=
+                                        swap.max_sol_cost;
+                                    event.num_dev_buy_txs += 1;
+                                    info!(
+                                        "Pump token swapped: {} ({} SOL)",
+                                        swap.amount,
+                                        swap.max_sol_cost as f64
+                                            / 1_000_000_000.0,
+                                    );
+                                } else if let Ok(token_metadata) =
+                                    PumpCreateIx::try_from_slice(&ix.data)
+                                {
+                                    event.name = token_metadata.name;
+                                    event.symbol = token_metadata.symbol;
+                                }
+                            });
                         }
+                        event.sig = tx.signatures[0].to_string();
                         event
                     })
                     .collect::<Vec<_>>()
@@ -187,8 +191,8 @@ impl PumpEntryProcessor {
 
         // this might be tiny bit blocking
         for event in events {
-            info!("batch of {} entries, sig: {}", entries.len(), event.sig);
             // self.post_webhook(event.clone()).await;
+            info!("Pump token event: {:?}", event);
             self.sig_tx.send(event.sig.clone()).await.unwrap();
         }
     }
