@@ -188,17 +188,23 @@ impl PumpEntryProcessor {
         // this might be tiny bit blocking
         for event in events {
             info!("batch of {} entries, sig: {}", entries.len(), event.sig);
-            self.post_webhook(event.clone()).await;
+            // self.post_webhook(event.clone()).await;
             self.sig_tx.send(event.sig.clone()).await.unwrap();
         }
     }
 
     async fn post_webhook(&self, event: CreatePumpTokenEvent) {
-        self.client
-            .post(&self.post_url)
-            .json(&event)
-            .send()
-            .await
-            .expect("Failed to send webhook");
+        match self.client.post(&self.post_url).json(&event).send().await {
+            Ok(resp) => {
+                if resp.status().is_success() {
+                    info!("Webhook sent: {:?}", event);
+                } else {
+                    error!("Failed to send webhook: {:?}", event);
+                }
+            }
+            Err(e) => {
+                error!("Failed to send webhook: {:?}", e);
+            }
+        }
     }
 }
