@@ -1,6 +1,7 @@
 use borsh::BorshDeserialize;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
+use solana_sdk::clock::Slot;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -14,8 +15,13 @@ use crate::arb::PoolsState;
 use crate::constants;
 use crate::pump::{PumpCreateIx, PumpSwapIx};
 
+pub struct EntriesWithMeta {
+    pub entries: Vec<Entry>,
+    pub slot: Slot,
+}
+
 pub struct ArbEntryProcessor {
-    entry_rx: mpsc::Receiver<Vec<Entry>>,
+    entry_rx: mpsc::Receiver<EntriesWithMeta>,
     error_rx: mpsc::Receiver<String>,
     pools_state: Arc<RwLock<PoolsState>>,
     sig_tx: mpsc::Sender<String>,
@@ -23,7 +29,7 @@ pub struct ArbEntryProcessor {
 
 impl ArbEntryProcessor {
     pub fn new(
-        entry_rx: mpsc::Receiver<Vec<Entry>>,
+        entry_rx: mpsc::Receiver<EntriesWithMeta>,
         error_rx: mpsc::Receiver<String>,
         pools_state: Arc<RwLock<PoolsState>>,
         sig_tx: mpsc::Sender<String>,
@@ -49,14 +55,21 @@ impl ArbEntryProcessor {
         }
     }
 
-    pub async fn process_entries(&mut self, entries: Vec<Entry>) {
+    pub async fn process_entries(
+        &mut self,
+        entries_with_meta: EntriesWithMeta,
+    ) {
         let mut pools_state = self.pools_state.write().await;
         debug!(
             "OK: entries {} txs: {}",
-            entries.len(),
-            entries.iter().map(|e| e.transactions.len()).sum::<usize>(),
+            entries_with_meta.entries.len(),
+            entries_with_meta
+                .entries
+                .iter()
+                .map(|e| e.transactions.len())
+                .sum::<usize>(),
         );
-        for entry in entries {
+        for entry in entries_with_meta.entries {
             for tx in entry.transactions {
                 if tx.message.static_account_keys().contains(
                     &Pubkey::from_str(constants::WHIRLPOOL)
@@ -93,7 +106,7 @@ impl ArbEntryProcessor {
 }
 
 pub struct PumpEntryProcessor {
-    entry_rx: mpsc::Receiver<Vec<Entry>>,
+    entry_rx: mpsc::Receiver<EntriesWithMeta>,
     error_rx: mpsc::Receiver<String>,
     sig_tx: mpsc::Sender<String>,
     post_url: String,
@@ -114,7 +127,7 @@ pub struct CreatePumpTokenEvent {
 
 impl PumpEntryProcessor {
     pub fn new(
-        entry_rx: mpsc::Receiver<Vec<Entry>>,
+        entry_rx: mpsc::Receiver<EntriesWithMeta>,
         error_rx: mpsc::Receiver<String>,
         sig_tx: mpsc::Sender<String>,
         post_url: String,
@@ -142,8 +155,9 @@ impl PumpEntryProcessor {
     }
 
     /// TODO each vec of entries should be included metadata about slot of deshred
-    pub async fn process_entries(&self, entries: Vec<Entry>) {
-        let events = entries
+    pub async fn process_entries(&self, entries_with_meta: EntriesWithMeta) {
+        let events = entries_with_meta
+            .entries
             .par_iter()
             .map(|entry| {
                 entry

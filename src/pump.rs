@@ -2,13 +2,7 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
 
 #[derive(
-    BorshDeserialize,
-    BorshSerialize,
-    Serialize,
-    Deserialize,
-    Clone,
-    Default,
-    Copy,
+    BorshDeserialize, BorshSerialize, Serialize, Deserialize, Clone, Default,
 )]
 pub struct PumpCreateIx {
     pub method_id: [u8; 8],

@@ -379,7 +379,7 @@ mod tests {
 
     #[test]
     fn deserialize_shreds() {
-        crate::logger::setup().expect("logger");
+        crate::logger::setup(crate::logger::Target::Stdout).expect("logger");
 
         let data = std::fs::read_to_string("packets.json")
             .expect("Failed to read packets.json");

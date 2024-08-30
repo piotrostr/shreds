@@ -1,6 +1,5 @@
 use log::{error, info, warn};
 use serde_json::json;
-use solana_entry::entry::Entry;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -10,6 +9,7 @@ use solana_ledger::shred::{
 };
 use solana_sdk::clock::Slot;
 
+use crate::entry_processor::EntriesWithMeta;
 use crate::shred::{
     deserialize_entries, deshred, get_coding_shred_header, get_fec_set_index,
     get_last_in_slot, get_shred_index, is_shred_data, CodingShredHeader,
@@ -51,7 +51,7 @@ pub struct ShredProcessor {
     fec_sets: HashMap<(Slot, u32), FecSet>, // (slot, fec_set_index) -> FecSet
     uniqueness: HashSet<ShredId>,
     _handles: Vec<tokio::task::JoinHandle<()>>,
-    entry_tx: mpsc::Sender<Vec<Entry>>,
+    entry_tx: mpsc::Sender<EntriesWithMeta>,
     _error_tx: mpsc::Sender<String>,
     total_collected_data: u128,
     total_processed_data: u128,
@@ -62,7 +62,7 @@ pub struct ShredProcessor {
 
 impl ShredProcessor {
     pub fn new(
-        entry_tx: mpsc::Sender<Vec<Entry>>,
+        entry_tx: mpsc::Sender<EntriesWithMeta>,
         error_tx: mpsc::Sender<String>,
     ) -> Self {
         ShredProcessor {
@@ -265,7 +265,11 @@ impl ShredProcessor {
                 self.total_processed_data += data_shreds.len() as u128;
                 fec_set.processed = true;
                 self.fec_sets.remove(&(slot, fec_set_index));
-                if let Err(e) = self.entry_tx.send(entries).await {
+                if let Err(e) = self
+                    .entry_tx
+                    .send(EntriesWithMeta { entries, slot })
+                    .await
+                {
                     error!(
                         "Failed to send entries for slot {} FEC set {}: {:?}",
                         slot, fec_set_index, e
