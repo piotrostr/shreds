@@ -209,7 +209,10 @@ impl PumpEntryProcessor {
 
         // this might be tiny bit blocking
         for event in events {
-            info!("Sending webhook: {:?}", event);
+            info!(
+                "Sending webhook: {}",
+                serde_json::to_string_pretty(&event).expect("pretty")
+            );
             // temp workaround, dont wanna send webhook (unimplemented)
             if event.slot < 100 {
                 self.post_webhook(event.clone()).await;
