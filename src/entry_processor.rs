@@ -171,12 +171,11 @@ impl PumpEntryProcessor {
                         let mut event = CreatePumpTokenEvent::default();
                         let account_keys = tx.message.static_account_keys();
                         if account_keys.len() == 18
-                            && account_keys.contains(
-                                &Pubkey::from_str(
+                            && account_keys[2]
+                                == Pubkey::from_str(
                                     constants::PUMP_FUN_MINT_AUTHORITY,
                                 )
-                                .expect("Failed to parse pubkey"),
-                            )
+                                .expect("Failed to parse pubkey")
                         {
                             let token_mint = account_keys[1];
                             let bc = account_keys[3];
