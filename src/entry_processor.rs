@@ -116,6 +116,7 @@ pub struct PumpEntryProcessor {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CreatePumpTokenEvent {
     pub sig: String,
+    pub slot: Slot,
     // other fields
     pub name: String,
     pub symbol: String,
@@ -163,7 +164,7 @@ impl PumpEntryProcessor {
                 entry
                     .transactions
                     .par_iter()
-                    .map(|tx| {
+                    .filter_map(|tx| {
                         let mut event = CreatePumpTokenEvent::default();
                         if tx.message.static_account_keys().contains(
                             &Pubkey::from_str(
@@ -194,9 +195,12 @@ impl PumpEntryProcessor {
                                     event.symbol = token_metadata.symbol;
                                 }
                             });
+                        } else {
+                            return None;
                         }
                         event.sig = tx.signatures[0].to_string();
-                        event
+                        event.slot = entries_with_meta.slot;
+                        Some(event)
                     })
                     .collect::<Vec<_>>()
             })
@@ -205,8 +209,11 @@ impl PumpEntryProcessor {
 
         // this might be tiny bit blocking
         for event in events {
-            // self.post_webhook(event.clone()).await;
-            info!("Pump token event: {:?}", event);
+            info!("Sending webhook: {:?}", event);
+            // temp workaround, dont wanna send webhook (unimplemented)
+            if event.slot < 100 {
+                self.post_webhook(event.clone()).await;
+            }
             self.sig_tx.send(event.sig.clone()).await.unwrap();
         }
     }
