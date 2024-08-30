@@ -193,6 +193,7 @@ impl PumpEntryProcessor {
                                 {
                                     event.name = token_metadata.name;
                                     event.symbol = token_metadata.symbol;
+                                    event.uri = token_metadata.uri;
                                 }
                             });
                         } else {
