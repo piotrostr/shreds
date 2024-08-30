@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::processor::FecSet;
+    use crate::shred_processor::FecSet;
     #[test]
     fn recovery_works() {
         let contents = std::fs::read_to_string("hanging_fec_sets.json")

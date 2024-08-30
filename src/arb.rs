@@ -1,9 +1,11 @@
 use crate::constants;
 use crate::raydium::{
-    calculate_price, parse_amm_instruction, swap_exact_amount,
-    ParsedAccounts, ParsedAmmInstruction, RaydiumAmmPool,
+    calculate_price, initialize_raydium_amm_pools, parse_amm_instruction,
+    swap_exact_amount, ParsedAccounts, ParsedAmmInstruction, RaydiumAmmPool,
 };
+use crate::util::env;
 use log::{error, info, warn};
+use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::instruction::CompiledInstruction;
 use solana_sdk::message::VersionedMessage;
 use solana_sdk::pubkey::Pubkey;
@@ -48,6 +50,23 @@ pub struct PoolsState {
 pub struct OrcaPool {}
 
 impl PoolsState {
+    /// Initialize the state of the pools, this has to be called every time
+    /// after struct is created for arb
+    pub async fn initialize(&mut self) {
+        initialize_raydium_amm_pools(
+            &RpcClient::new(env("RPC_URL").to_string()),
+            self,
+            get_mints_of_interest(),
+        )
+        .await;
+        info!(
+            "Initialized Raydium AMM pools: {}",
+            self.raydium_pools.len()
+        );
+
+        // TODO orca etc
+    }
+
     pub fn reduce_orca_tx(&mut self, _tx: VersionedTransaction) {
         // TODO: Implement Orca transaction processing
     }

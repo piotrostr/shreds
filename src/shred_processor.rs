@@ -47,12 +47,12 @@ impl std::fmt::Debug for FecSet {
 }
 
 #[derive(Debug)]
-pub struct Processor {
+pub struct ShredProcessor {
     fec_sets: HashMap<(Slot, u32), FecSet>, // (slot, fec_set_index) -> FecSet
     uniqueness: HashSet<ShredId>,
     _handles: Vec<tokio::task::JoinHandle<()>>,
-    entry_sender: mpsc::Sender<Vec<Entry>>,
-    _error_sender: mpsc::Sender<String>,
+    entry_tx: mpsc::Sender<Vec<Entry>>,
+    _error_tx: mpsc::Sender<String>,
     total_collected_data: u128,
     total_processed_data: u128,
     total_collected_coding: u128,
@@ -60,17 +60,17 @@ pub struct Processor {
     fec_set_failure: u128,
 }
 
-impl Processor {
+impl ShredProcessor {
     pub fn new(
-        entry_sender: mpsc::Sender<Vec<Entry>>,
-        error_sender: mpsc::Sender<String>,
+        entry_tx: mpsc::Sender<Vec<Entry>>,
+        error_tx: mpsc::Sender<String>,
     ) -> Self {
-        Processor {
+        ShredProcessor {
             fec_sets: HashMap::new(),
             uniqueness: HashSet::new(),
             _handles: Vec::new(),
-            entry_sender,
-            _error_sender: error_sender,
+            entry_tx,
+            _error_tx: error_tx,
             total_collected_data: 0,
             total_processed_data: 0,
             total_collected_coding: 0,
@@ -265,7 +265,7 @@ impl Processor {
                 self.total_processed_data += data_shreds.len() as u128;
                 fec_set.processed = true;
                 self.fec_sets.remove(&(slot, fec_set_index));
-                if let Err(e) = self.entry_sender.send(entries).await {
+                if let Err(e) = self.entry_tx.send(entries).await {
                     error!(
                         "Failed to send entries for slot {} FEC set {}: {:?}",
                         slot, fec_set_index, e
@@ -301,8 +301,8 @@ impl Processor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algo::{receive_entries, AlgoConfig};
-    use crate::arb::{get_mints_of_interest, PoolsState};
+    use crate::arb::PoolsState;
+    use crate::entry_processor::ArbEntryProcessor;
     use crate::pump::PumpCreateIx;
     use borsh::BorshDeserialize;
     use log::info;
@@ -320,50 +320,39 @@ mod tests {
         let raw_shreds: Vec<Vec<u8>> =
             serde_json::from_str(&data).expect("Failed to parse JSON");
 
-        let (entry_sender, entry_receiver) = mpsc::channel(2000);
-        let (error_sender, error_receiver) = mpsc::channel(2000);
-        let (sig_sender, mut sig_receiver) = mpsc::channel(2000);
+        let (entry_tx, entry_rx) = mpsc::channel(2000);
+        let (error_tx, error_rx) = mpsc::channel(2000);
+        let (sig_tx, mut sig_rx) = mpsc::channel(2000);
 
         tokio::spawn(async move {
-            while let Some(sig) = sig_receiver.recv().await {
+            while let Some(sig) = sig_rx.recv().await {
                 let timestamp = chrono::Utc::now().timestamp_millis();
                 log::debug!("shreds: {} {}", timestamp, sig);
             }
         });
 
-        let mut processor = Processor::new(entry_sender, error_sender);
+        let mut processor = ShredProcessor::new(entry_tx, error_tx);
         for raw_shred in raw_shreds {
             processor.collect(Arc::new(raw_shred)).await;
         }
 
-        let pools_state = Arc::new(RwLock::new(PoolsState::default()));
-
-        receive_entries(
-            pools_state.clone(),
-            entry_receiver,
-            error_receiver,
-            Arc::new(sig_sender),
-            Arc::new(AlgoConfig {
-                arb_mode: false,
-                mints_of_interest: get_mints_of_interest(),
-                pump_mode: true,
-            }),
-        )
-        .await;
+        tokio::spawn(async move {
+            let pools_state = Arc::new(RwLock::new(PoolsState::default()));
+            pools_state.write().await.initialize().await;
+            let mut entry_processor = ArbEntryProcessor::new(
+                entry_rx,
+                error_rx,
+                pools_state.clone(),
+                sig_tx,
+            );
+            entry_processor.receive_entries().await;
+        });
 
         for handle in processor._handles.drain(..) {
             handle.await.expect("Failed to process batch");
         }
 
         info!("{}", processor.metrics());
-
-        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-
-        let pools_state = pools_state.read().await;
-        info!(
-            "Pools state: orca txs: {} raydium txs: {}",
-            pools_state.orca_count, pools_state.raydium_amm_count,
-        );
     }
 
     #[test]

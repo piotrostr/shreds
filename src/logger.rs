@@ -1,11 +1,20 @@
 use std::fs::File;
 use std::io::{Read, Write};
 
-pub fn setup() -> Result<(), Box<dyn std::error::Error>> {
+#[derive(Debug)]
+pub enum Target {
+    File,
+    Stdout,
+}
+
+pub fn setup(target: Target) -> Result<(), Box<dyn std::error::Error>> {
     // let random = grab_random_bytes();
     // let log_file = File::create(format!("shreds-{}.log", hex::encode(random)))?;
     let log_file = File::create("shreds.log")?;
-    println!("Logging to: {:?}", log_file);
+    println!("Logging to: {:?}", target);
+    if let Target::File = target {
+        println!("File: {:?}", log_file);
+    }
     env_logger::Builder::default()
         .format_module_path(false)
         .filter_level(log::LevelFilter::Info)
@@ -22,7 +31,11 @@ pub fn setup() -> Result<(), Box<dyn std::error::Error>> {
                 record.args()
             )
         })
-        .target(env_logger::Target::Pipe(Box::new(log_file)))
+        .target(if let Target::Stdout = target {
+            env_logger::Target::Stdout
+        } else {
+            env_logger::Target::Pipe(Box::new(log_file))
+        })
         .init();
 
     Ok(())

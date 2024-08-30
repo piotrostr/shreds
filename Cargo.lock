@@ -4809,6 +4809,7 @@ dependencies = [
  "once_cell",
  "raydium-library",
  "raydium_amm",
+ "rayon",
  "reed-solomon-erasure",
  "reqwest 0.12.4",
  "serde",

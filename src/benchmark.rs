@@ -11,7 +11,7 @@ use solana_client::rpc_config::{
 };
 use solana_sdk::commitment_config::CommitmentConfig;
 
-use crate::algo::env;
+use crate::util::env;
 
 pub type Sigs = Arc<RwLock<Vec<(u64, String)>>>;
 
