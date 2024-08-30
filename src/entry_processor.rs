@@ -118,6 +118,9 @@ pub struct CreatePumpTokenEvent {
     pub sig: String,
     pub slot: Slot,
     // other fields
+    pub token_mint: String,
+    pub bounding_curve: String,
+    pub associated_bounding_curve: String,
     pub name: String,
     pub symbol: String,
     pub uri: String,
@@ -166,18 +169,21 @@ impl PumpEntryProcessor {
                     .par_iter()
                     .filter_map(|tx| {
                         let mut event = CreatePumpTokenEvent::default();
-                        if tx.message.static_account_keys().contains(
-                            &Pubkey::from_str(
-                                constants::PUMP_FUN_MINT_AUTHORITY,
+                        let account_keys = tx.message.static_account_keys();
+                        if account_keys.len() == 18
+                            && account_keys.contains(
+                                &Pubkey::from_str(
+                                    constants::PUMP_FUN_MINT_AUTHORITY,
+                                )
+                                .expect("Failed to parse pubkey"),
                             )
-                            .expect("Failed to parse pubkey"),
-                        ) {
-                            info!(
-                                "Accounts: {:#?}",
-                                tx.message.static_account_keys()
-                            );
-                            // here parse all the required data and send the webhook, this has to go in sync
-                            info!("Pump token created: {}", tx.signatures[0]);
+                        {
+                            let token_mint = account_keys[1];
+                            let bc = account_keys[3];
+                            let abc = account_keys[4];
+                            event.token_mint = token_mint.to_string();
+                            event.bounding_curve = bc.to_string();
+                            event.associated_bounding_curve = abc.to_string();
                             tx.message.instructions().iter().for_each(|ix| {
                                 if let Ok(swap) =
                                     PumpSwapIx::try_from_slice(&ix.data)
@@ -186,12 +192,6 @@ impl PumpEntryProcessor {
                                     event.dev_max_sol_cost +=
                                         swap.max_sol_cost;
                                     event.num_dev_buy_txs += 1;
-                                    info!(
-                                        "Pump token swapped: {} ({} SOL)",
-                                        swap.amount,
-                                        swap.max_sol_cost as f64
-                                            / 1_000_000_000.0,
-                                    );
                                 } else if let Ok(token_metadata) =
                                     PumpCreateIx::try_from_slice(&ix.data)
                                 {
