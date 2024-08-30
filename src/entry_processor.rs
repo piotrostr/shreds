@@ -172,6 +172,10 @@ impl PumpEntryProcessor {
                             )
                             .expect("Failed to parse pubkey"),
                         ) {
+                            info!(
+                                "Accounts: {:#?}",
+                                tx.message.static_account_keys()
+                            );
                             // here parse all the required data and send the webhook, this has to go in sync
                             info!("Pump token created: {}", tx.signatures[0]);
                             tx.message.instructions().iter().for_each(|ix| {
