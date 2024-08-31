@@ -266,7 +266,7 @@ impl PumpEntryProcessor {
     }
 
     async fn post_webhook(&self, event: CreatePumpTokenEvent) {
-        let url = self.post_url.clone() + "/pump-buy";
+        let url = self.post_url.clone() + "/v2/pump-buy";
         match self.client.post(url.clone()).json(&event).send().await {
             Ok(resp) => {
                 if resp.status().is_success() {
