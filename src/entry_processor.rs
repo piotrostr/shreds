@@ -266,18 +266,13 @@ impl PumpEntryProcessor {
     }
 
     async fn post_webhook(&self, event: CreatePumpTokenEvent) {
-        match self
-            .client
-            .post(self.post_url.clone() + "/pump-buy")
-            .json(&event)
-            .send()
-            .await
-        {
+        let url = self.post_url.clone() + "/pump-buy";
+        match self.client.post(url.clone()).json(&event).send().await {
             Ok(resp) => {
                 if resp.status().is_success() {
                     info!("Webhook sent: {:?}", event);
                 } else {
-                    error!("Failed to send webhook: {:?}", event);
+                    error!("Failed to send webhook to {}: {:?}", url, event);
                 }
             }
             Err(e) => {
@@ -291,7 +286,7 @@ impl PumpEntryProcessor {
 /// e.g. if you buy 1 sol worth of the token at start, the max_sol_amount will
 /// amount to 1.01 sol, only 1 sol goes to the pool, 0.01 is the fee
 pub fn deduct_fee(sol_amount: u64) -> u64 {
-    (sol_amount * 99) / 100
+    (sol_amount * 100) / 101
 }
 
 #[cfg(test)]
@@ -300,10 +295,7 @@ mod tests {
 
     #[test]
     fn test_deduct_fee() {
-        assert_eq!(deduct_fee(1010000000), 999900000);
-        assert_eq!(deduct_fee(1000000000), 990000000);
-        assert_eq!(deduct_fee(100), 99);
-        assert_eq!(deduct_fee(1), 0);
-        assert_eq!(deduct_fee(0), 0);
+        assert_eq!(deduct_fee(1010000000), 1000000000);
+        assert_eq!(deduct_fee(2020000000), 2000000000);
     }
 }
