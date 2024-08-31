@@ -270,7 +270,7 @@ impl PumpEntryProcessor {
         match self.client.post(url.clone()).json(&event).send().await {
             Ok(resp) => {
                 if resp.status().is_success() {
-                    info!("Webhook sent: {:?}", event);
+                    info!("Webhook sent: {}", event.sig);
                 } else {
                     error!("Failed to send webhook to {}: {:?}", url, event);
                 }
