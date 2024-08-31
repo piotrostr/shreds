@@ -16,6 +16,12 @@ use crate::constants;
 use crate::pump::{PumpCreateIx, PumpSwapIx};
 use crate::util::{pubkey_to_string, string_to_pubkey};
 
+// those are virtual btw
+// Initial SOL reserves: 30,000,000,000 lamports (30 SOL)
+// Initial token reserves: 1,073,000,000,000,000 tokens
+pub const DEFAULT_SOL_INITIAL_RESERVES: u64 = 30_000_000_000;
+pub const DEFAULT_TOKEN_INITIAL_RESERVES: u64 = 1_073_000_000_000_000;
+
 pub struct EntriesWithMeta {
     pub entries: Vec<Entry>,
     pub slot: Slot,
@@ -114,7 +120,7 @@ pub struct PumpEntryProcessor {
     client: reqwest::Client,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreatePumpTokenEvent {
     pub sig: String,
     pub slot: Slot,
@@ -139,6 +145,28 @@ pub struct CreatePumpTokenEvent {
     pub dev_bought_amount: u64,
     pub dev_max_sol_cost: u64,
     pub num_dev_buy_txs: u64,
+    pub virtual_sol_reserves: u64,
+    pub virtual_token_reserves: u64,
+}
+
+impl Default for CreatePumpTokenEvent {
+    fn default() -> Self {
+        CreatePumpTokenEvent {
+            sig: "".to_string(),
+            slot: 0,
+            mint: Pubkey::default(),
+            bounding_curve: Pubkey::default(),
+            associated_bounding_curve: Pubkey::default(),
+            name: "".to_string(),
+            symbol: "".to_string(),
+            uri: "".to_string(),
+            dev_bought_amount: 0,
+            dev_max_sol_cost: 0,
+            num_dev_buy_txs: 0,
+            virtual_sol_reserves: DEFAULT_SOL_INITIAL_RESERVES,
+            virtual_token_reserves: DEFAULT_TOKEN_INITIAL_RESERVES,
+        }
+    }
 }
 
 impl PumpEntryProcessor {
@@ -202,6 +230,10 @@ impl PumpEntryProcessor {
                                     event.dev_max_sol_cost +=
                                         swap.max_sol_cost;
                                     event.num_dev_buy_txs += 1;
+                                    event.virtual_sol_reserves +=
+                                        deduct_fee(swap.max_sol_cost);
+                                    event.virtual_token_reserves -=
+                                        swap.amount;
                                 } else if let Ok(token_metadata) =
                                     PumpCreateIx::try_from_slice(&ix.data)
                                 {
@@ -234,7 +266,13 @@ impl PumpEntryProcessor {
     }
 
     async fn post_webhook(&self, event: CreatePumpTokenEvent) {
-        match self.client.post(&self.post_url).json(&event).send().await {
+        match self
+            .client
+            .post(self.post_url.clone() + "/pump-buy")
+            .json(&event)
+            .send()
+            .await
+        {
             Ok(resp) => {
                 if resp.status().is_success() {
                     info!("Webhook sent: {:?}", event);
@@ -246,5 +284,26 @@ impl PumpEntryProcessor {
                 error!("Failed to send webhook: {:?}", e);
             }
         }
+    }
+}
+
+/// deduct_fee takes the 1% fee from the amount of SOL out
+/// e.g. if you buy 1 sol worth of the token at start, the max_sol_amount will
+/// amount to 1.01 sol, only 1 sol goes to the pool, 0.01 is the fee
+pub fn deduct_fee(sol_amount: u64) -> u64 {
+    (sol_amount * 99) / 100
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_deduct_fee() {
+        assert_eq!(deduct_fee(1010000000), 999900000);
+        assert_eq!(deduct_fee(1000000000), 990000000);
+        assert_eq!(deduct_fee(100), 99);
+        assert_eq!(deduct_fee(1), 0);
+        assert_eq!(deduct_fee(0), 0);
     }
 }
