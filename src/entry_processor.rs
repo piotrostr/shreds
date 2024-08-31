@@ -14,6 +14,7 @@ use tokio::sync::mpsc;
 use crate::arb::PoolsState;
 use crate::constants;
 use crate::pump::{PumpCreateIx, PumpSwapIx};
+use crate::util::{pubkey_to_string, string_to_pubkey};
 
 pub struct EntriesWithMeta {
     pub entries: Vec<Entry>,
@@ -117,10 +118,21 @@ pub struct PumpEntryProcessor {
 pub struct CreatePumpTokenEvent {
     pub sig: String,
     pub slot: Slot,
-    // other fields
-    pub token_mint: String,
-    pub bounding_curve: String,
-    pub associated_bounding_curve: String,
+    #[serde(
+        serialize_with = "pubkey_to_string",
+        deserialize_with = "string_to_pubkey"
+    )]
+    pub mint: Pubkey,
+    #[serde(
+        serialize_with = "pubkey_to_string",
+        deserialize_with = "string_to_pubkey"
+    )]
+    pub bounding_curve: Pubkey,
+    #[serde(
+        serialize_with = "pubkey_to_string",
+        deserialize_with = "string_to_pubkey"
+    )]
+    pub associated_bounding_curve: Pubkey,
     pub name: String,
     pub symbol: String,
     pub uri: String,
@@ -178,12 +190,10 @@ impl PumpEntryProcessor {
                                 .expect("Failed to parse pubkey"),
                             )
                         {
-                            let token_mint = account_keys[1];
-                            let bc = account_keys[3];
-                            let abc = account_keys[4];
-                            event.token_mint = token_mint.to_string();
-                            event.bounding_curve = bc.to_string();
-                            event.associated_bounding_curve = abc.to_string();
+                            println!("Found pump tx: {:#?}", tx);
+                            event.mint = account_keys[1];
+                            event.bounding_curve = account_keys[3];
+                            event.associated_bounding_curve = account_keys[4];
                             tx.message.instructions().iter().for_each(|ix| {
                                 if let Ok(swap) =
                                     PumpSwapIx::try_from_slice(&ix.data)
@@ -218,10 +228,7 @@ impl PumpEntryProcessor {
                 "Sending webhook: {}",
                 serde_json::to_string_pretty(&event).expect("pretty")
             );
-            // temp workaround, dont wanna send webhook (unimplemented)
-            if event.slot < 100 {
-                self.post_webhook(event.clone()).await;
-            }
+            self.post_webhook(event.clone()).await;
             self.sig_tx.send(event.sig.clone()).await.unwrap();
         }
     }

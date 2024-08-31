@@ -66,18 +66,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::ArbMode => {
             let bind = app.args.bind.unwrap();
             let post = app.args.post_url.unwrap();
+            health_check(post.clone()).await?;
             info!("Binding to address: {}, posting to: {}", bind, post);
             service::run(bind, post, Mode::Arb).await?;
         }
         Command::PumpMode => {
             let bind = app.args.bind.unwrap();
             let post = app.args.post_url.unwrap();
+            health_check(post.clone()).await?;
             info!("Binding to address: {}, posting to: {}", bind, post);
             service::run(bind, post, Mode::Pump).await?;
         }
     }
 
     Ok(())
+}
+
+pub async fn health_check(
+    post_url: String,
+) -> Result<(), Box<dyn std::error::Error>> {
+    info!("Running health check on: {}", post_url);
+
+    let client = reqwest::Client::new();
+    let response = client
+        .get(post_url + "/healthz")
+        .send()
+        .await
+        .expect("Failed to send request");
+
+    if response.status().is_success() {
+        Ok(())
+    } else {
+        Err("Failed health check".into())
+    }
 }
 
 pub async fn benchmark_cmd(
