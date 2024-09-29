@@ -82,6 +82,13 @@
         accept_hostkey: yes
         key_file: "{{ ssh_key_path }}"
 
+    - name: Clone pump-rs repository
+      git:
+        repo: "git@github.com:{{ github_username }}/pump-rs.git"
+        dest: /{{ ansible_user }}/pump-rs
+        accept_hostkey: yes
+        key_file: "{{ ssh_key_path }}"
+
     - name: Copy over auth.json
       copy:
         src: ../auth.json
