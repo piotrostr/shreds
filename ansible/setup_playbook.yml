@@ -87,10 +87,10 @@
         src: ../auth.json
         dest: /{{ ansible_user }}/{{ github_repo }}/auth.json
 
-    - name: Copy over FAST.json
+    - name: Copy over FuckU.json
       copy:
-        src: ../FAST.json
-        dest: /{{ ansible_user }}/{{ github_repo }}/FAST.json
+        src: ../FuckU.json
+        dest: /{{ ansible_user }}/{{ github_repo }}/FuckU.json
 
     - name: Copy over .env
       copy:
