@@ -120,6 +120,15 @@ pub async fn run_listener_with_algo(
                 entry_processor.receive_entries().await;
             })
         }
+        Mode::Graduates => {
+            info!("Starting entries rx (<=> webhook tx) graduates mode");
+            tokio::spawn(async move {
+                let mut entry_processor = PumpEntryProcessor::new(
+                    entry_rx, error_rx, sig_tx, post_url,
+                );
+                entry_processor.receive_entries().await;
+            })
+        }
     };
 
     info!("Starting sigs loop");

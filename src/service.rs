@@ -1,6 +1,7 @@
 use crate::arb::PoolsState;
 use crate::entry_processor::ArbEntryProcessor;
 use crate::entry_processor::PumpEntryProcessor;
+use crate::graduates_processor::GraduatesProcessor;
 use crate::listener::PACKET_SIZE;
 use crate::shred_processor::ShredProcessor;
 use log::{error, info};
@@ -14,6 +15,7 @@ use tokio::time::{sleep, Duration};
 pub enum Mode {
     Arb,
     Pump,
+    Graduates,
 }
 
 pub async fn run(
@@ -103,6 +105,14 @@ pub async fn run(
                 let mut entry_processor = PumpEntryProcessor::new(
                     entry_rx, error_rx, sig_tx, post_url,
                 );
+                entry_processor.receive_entries().await;
+            })
+        }
+        Mode::Graduates => {
+            info!("Graduates mode");
+            tokio::spawn(async move {
+                let mut entry_processor =
+                    GraduatesProcessor::new(entry_rx, error_rx, sig_tx);
                 entry_processor.receive_entries().await;
             })
         }

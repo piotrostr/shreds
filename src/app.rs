@@ -44,4 +44,7 @@ pub enum Command {
 
     /// Run in arb mode (listens for raydium txs)
     ArbMode,
+
+    /// Raydium new listings
+    GraduatesMode,
 }

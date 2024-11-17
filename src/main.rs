@@ -77,6 +77,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             info!("Binding to address: {}, posting to: {}", bind, post);
             service::run(bind, post, Mode::Pump).await?;
         }
+        Command::GraduatesMode => {
+            let bind = app.args.bind.unwrap();
+            let post = app.args.post_url.unwrap();
+            health_check(post.clone()).await?;
+            info!("Binding to address: {}, posting to: {}", bind, post);
+            service::run(bind, post, Mode::Graduates).await?;
+        }
     }
 
     Ok(())

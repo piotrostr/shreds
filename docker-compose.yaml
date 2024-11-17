@@ -20,7 +20,7 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: shreds
-    command: ["./shreds", "pump-mode"]
+    command: ["./shreds", "graduates-mode"]
     volumes:
       - type: bind
         source: ./raydium.json
