@@ -1,5 +1,8 @@
 use log::{error, info};
-use solana_sdk::compute_budget;
+use solana_program::pubkey::Pubkey;
+use solana_sdk::message::VersionedMessage;
+use solana_sdk::transaction::VersionedTransaction;
+use std::str::FromStr;
 use tokio::sync::mpsc;
 
 use crate::entry_processor::EntriesWithMeta;
@@ -9,38 +12,35 @@ const PUMP_MIGRATION_PROGRAM: &str =
 const RAYDIUM_LP_PROGRAM: &str =
     "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8";
 
+lazy_static::lazy_static! {
+    static ref PUMP_MIGRATION_PUBKEY: Pubkey = Pubkey::from_str(PUMP_MIGRATION_PROGRAM).unwrap();
+    static ref RAYDIUM_LP_PUBKEY: Pubkey = Pubkey::from_str(RAYDIUM_LP_PROGRAM).unwrap();
+}
+
 pub struct GraduatesProcessor {
     entry_rx: mpsc::Receiver<EntriesWithMeta>,
     error_rx: mpsc::Receiver<String>,
     sig_tx: mpsc::Sender<String>,
 }
 
-use solana_program::pubkey::Pubkey;
-use solana_sdk::transaction::VersionedTransaction;
+fn filter_transaction(transaction: &VersionedTransaction) -> bool {
+    if let VersionedMessage::V0(message) = &transaction.message {
+        // Check if the transaction is signed by PUMP_MIGRATION_PROGRAM
+        let is_signed_by_pump = message
+            .account_keys
+            .iter()
+            .any(|key| key == &*PUMP_MIGRATION_PUBKEY);
 
-fn parse_transaction_details(tx: &VersionedTransaction) -> (Pubkey, Pubkey) {
-    // Get the first instruction's program ID
-    let program_id = match &tx.message {
-        solana_sdk::message::VersionedMessage::Legacy(message) => message
-            .instructions[0]
-            .program_id(message.account_keys.as_slice()),
-        solana_sdk::message::VersionedMessage::V0(message) => {
-            &message.account_keys
-                [message.instructions[0].program_id_index as usize]
-        }
-    };
+        // Check if any instruction uses RAYDIUM_LP_PROGRAM
+        let uses_raydium = message.instructions.iter().any(|instruction| {
+            let program_id =
+                &message.account_keys[instruction.program_id_index as usize];
+            program_id == &*RAYDIUM_LP_PUBKEY
+        });
 
-    // Get the signer (first account in the account_keys)
-    let signer = match &tx.message {
-        solana_sdk::message::VersionedMessage::Legacy(message) => {
-            message.account_keys[0]
-        }
-        solana_sdk::message::VersionedMessage::V0(message) => {
-            message.account_keys[0]
-        }
-    };
-
-    (*program_id, signer)
+        return is_signed_by_pump && uses_raydium;
+    }
+    false
 }
 
 impl GraduatesProcessor {
@@ -75,18 +75,18 @@ impl GraduatesProcessor {
     ) {
         for entry in entries_with_meta.entries {
             for tx in entry.transactions {
-                let (program_id, signer) = parse_transaction_details(&tx);
-                println!("Program ID: {}, signer: {}", program_id, signer);
-                if program_id == compute_budget::id() {
-                    info!("{:?}", tx);
-                    self.sig_tx.send(signer.to_string()).await.unwrap();
+                if filter_transaction(&tx) {
+                    info!("Found matching transaction: {:?}", tx.signatures);
+                    if let Some(sig) = tx.signatures.first() {
+                        if let Err(e) =
+                            self.sig_tx.send(sig.to_string()).await
+                        {
+                            error!("Failed to send signature: {}", e);
+                        }
+                    }
                 }
-                // if program_id.to_string() == PUMP_MIGRATION_PROGRAM {
-                //     info!("Pump migration detected");
-                // } else if program_id.to_string() == RAYDIUM_LP_PROGRAM {
-                //     info!("Raydium LP detected");
-                // }
             }
         }
     }
 }
+

@@ -4805,6 +4805,7 @@ dependencies = [
  "futures-util",
  "hex",
  "indicatif",
+ "lazy_static",
  "log",
  "once_cell",
  "raydium-library",
