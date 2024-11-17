@@ -1,4 +1,5 @@
 use log::{error, info};
+use solana_sdk::compute_budget;
 use tokio::sync::mpsc;
 
 use crate::entry_processor::EntriesWithMeta;
@@ -76,13 +77,15 @@ impl GraduatesProcessor {
             for tx in entry.transactions {
                 let (program_id, signer) = parse_transaction_details(&tx);
                 println!("Program ID: {}, signer: {}", program_id, signer);
-                if program_id.to_string() == PUMP_MIGRATION_PROGRAM {
-                    info!("Pump migration detected");
-                    self.sig_tx.send(signer.to_string()).await.unwrap();
-                } else if program_id.to_string() == RAYDIUM_LP_PROGRAM {
-                    info!("Raydium LP detected");
+                if program_id == compute_budget::id() {
+                    info!("{:?}", tx);
                     self.sig_tx.send(signer.to_string()).await.unwrap();
                 }
+                // if program_id.to_string() == PUMP_MIGRATION_PROGRAM {
+                //     info!("Pump migration detected");
+                // } else if program_id.to_string() == RAYDIUM_LP_PROGRAM {
+                //     info!("Raydium LP detected");
+                // }
             }
         }
     }
