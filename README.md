@@ -1,7 +1,9 @@
 # shreds
 
-use shredstream to perform aribtrage (simple idea, super fucking hard to
-implement well)
+use the solana gossip protocol shredstream to get as fast as humanly possible
+
+this works pretty well, though has some minor issues and drop some shred
+entries, but it is good enough to snipe stuff
 
 ## TODOs
 
@@ -62,7 +64,3 @@ implement well)
 ## In the future
 
 - in the algo, ensure that ATAs are already created, this saves some ixs
-
-```
-
-```
