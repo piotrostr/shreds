@@ -166,7 +166,10 @@ pub fn shred_data(shred: &Shred) -> Result<&[u8], Error> {
 pub fn load_shreds(raw_shreds: Vec<Vec<u8>>) -> HashMap<u64, Vec<Shred>> {
     let mut shreds_by_slot: HashMap<u64, Vec<Shred>> = HashMap::new();
     for raw_shred in raw_shreds {
-        if raw_shred.len() == 29 {
+        if raw_shred.len() == 29
+            || raw_shred.len() == 28
+            || raw_shred.len() == 21
+        {
             continue;
         }
         let shred =
