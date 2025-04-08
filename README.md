@@ -1,5 +1,9 @@
 # shreds
 
+>[!NOTE]
+>This is now officially available at Jito: https://github.com/jito-labs/shredstream-proxy/blob/master/examples/deshred.rs
+
+
 use the solana gossip protocol shredstream to get as fast as humanly possible
 
 this works pretty well, though has some minor issues and drop some shred
